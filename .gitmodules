@@ -1,0 +1,3 @@
+[submodule "external/GroundingDINO"]
+	path = external/GroundingDINO
+	url = https://github.com/FANG-Xiaolin/GroundingDINO
