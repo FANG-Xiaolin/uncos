@@ -35,8 +35,10 @@ class UncOS:
         self.pcd = None
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        sam_ckpt_path = os.path.join(os.path.dirname(__file__), "sam_vit_h_4b8939.pth")
+        cache_dir = os.path.expanduser("~/.cache/uncos")
+        sam_ckpt_path = os.path.join(cache_dir, "sam_vit_h_4b8939.pth")
         if not os.path.exists(sam_ckpt_path):
+            os.makedirs(cache_dir, exist_ok=True)
             print(f'Downloading SAM checkpoint to {sam_ckpt_path}')
             torch.hub.download_url_to_file(
                 'https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth',

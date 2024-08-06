@@ -25,8 +25,10 @@ class GroundedSAM:
     def __init__(self, box_thr, text_thr, loaded_sam):
         import groundingdino.config.GroundingDINO_SwinT_OGC
         config_file = groundingdino.config.GroundingDINO_SwinT_OGC.__file__
-        grounding_dino_checkpoint_path = os.path.join(os.path.dirname(__file__), 'groundingdino_swint_ogc.pth')  # change the path of the model
+        cache_dir = os.path.expanduser("~/.cache/uncos")
+        grounding_dino_checkpoint_path = os.path.join(cache_dir, 'groundingdino_swint_ogc.pth')  # change the path of the model
         if not os.path.exists(grounding_dino_checkpoint_path):
+            os.makedirs(cache_dir, exist_ok=True)
             print(f'Downloading GroundingDINO checkpoint to {grounding_dino_checkpoint_path}.')
             torch.hub.download_url_to_file(
                 'https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth',
