@@ -16,10 +16,10 @@ import open3d as o3d
 
 from scipy.optimize import linear_sum_assignment
 from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator
-from uncos_utils import iou_fn, iom_fn, intersection_fn, bfs_cluster, crop, overlay_masks, \
+from .uncos_utils import iou_fn, iom_fn, intersection_fn, bfs_cluster, crop, overlay_masks, \
     overlay_mask_simple, is_degenerated_mask,  point_cloud_from_depth_image_camera_frame, visualize_pointcloud, \
     MaskWrapper, SegHypothesis, RegionHypothesis, MIN_AREA_PERCENTAGE
-from groundedsam_wrapper import GroundedSAM
+from .groundedsam_wrapper import GroundedSAM
 
 IOU_THRES = 0.7
 SCORE_THR = 0.88 # .88 As used in SAM official implementation
@@ -35,7 +35,7 @@ class UncOS:
         self.pcd = None
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        sam_ckpt_path = os.path.join(os.path.dirname(__file__), 'data', "sam_vit_h_4b8939.pth")
+        sam_ckpt_path = os.path.join(os.path.dirname(__file__), "sam_vit_h_4b8939.pth")
         if not os.path.exists(sam_ckpt_path):
             print(f'Downloading SAM checkpoint to {sam_ckpt_path}')
             torch.hub.download_url_to_file(

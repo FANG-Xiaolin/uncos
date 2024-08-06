@@ -9,7 +9,7 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 
 # segment anything
 from segment_anything import build_sam,SamPredictor
-from uncos_utils import MaskWrapper
+from .uncos_utils import MaskWrapper
 
 import torchvision.transforms as TS
 import matplotlib.pyplot as plt
@@ -25,7 +25,7 @@ class GroundedSAM:
     def __init__(self, box_thr, text_thr, loaded_sam):
         import groundingdino.config.GroundingDINO_SwinT_OGC
         config_file = groundingdino.config.GroundingDINO_SwinT_OGC.__file__
-        grounding_dino_checkpoint_path = os.path.join(os.path.dirname(__file__), 'data','groundingdino_swint_ogc.pth')  # change the path of the model
+        grounding_dino_checkpoint_path = os.path.join(os.path.dirname(__file__), 'groundingdino_swint_ogc.pth')  # change the path of the model
         if not os.path.exists(grounding_dino_checkpoint_path):
             print(f'Downloading GroundingDINO checkpoint to {grounding_dino_checkpoint_path}.')
             torch.hub.download_url_to_file(

@@ -1,0 +1,27 @@
+[project]
+name = "uncos"
+version = "0.1.0"
+description = "Embodied Uncertainty-Aware Object Segmentation"
+readme = "README.md"
+license = {text = "MIT"}
+keywords = ["segmentation", "robotics"]
+authors = [
+    { name = "Xiaolin Fang", email = "fxlfang@gmail.com" },
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = "requirements.txt"}
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.urls]
+Source = "https://github.com/FANG-Xiaolin/uncos"
+Homepage = "https://sites.google.com/view/embodied-uncertain-seg"
