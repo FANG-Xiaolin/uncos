@@ -11,6 +11,7 @@ def main():
     if test_most_likely:
         assert len(uncertain_hypotheses)==0
     uncos.visualize_confident_uncertain(pred_masks_boolarray, uncertain_hypotheses)
+    # uncos.visualize_confident_uncertain(pred_masks_boolarray, uncertain_hypotheses, show=False, save_path='demo_result.png')
 
 if __name__ == "__main__":
     main()
