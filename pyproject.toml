@@ -25,3 +25,7 @@ build-backend = "setuptools.build_meta"
 [project.urls]
 Source = "https://github.com/FANG-Xiaolin/uncos"
 Homepage = "https://sites.google.com/view/embodied-uncertain-seg"
+
+[tool.setuptools.packages.find]
+include = ["uncos"]
+namespaces = false

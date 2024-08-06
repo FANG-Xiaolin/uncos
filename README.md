@@ -19,6 +19,8 @@ International Conference on Intelligent Robots and Systems (IROS) 2024
 }
 ```
 
+![UncOS EOS diagram](assets/eos_uncos_diagram.png?raw=true)
+
 Uncos is an active prompting strategy for combining promptable top-down 
 and bottom-up pre-trained object instance segmentation methods to obtain 
 a distribution over image-segmentation hypotheses.
@@ -27,9 +29,17 @@ Embodied object segmentation code to be added soon. Stayed tuned!
 
 ## Installation
 
-The code is tested with python 3.10, CUDA 12.2, pytorch 2.4.0.
+The code is tested with python 3.10, CUDA 12.2, pytorch 2.4.0. CPU-only mode is supported. 
+<details>
+<summary>(Optional) Create conda environment</summary>
 
-Install UncOS directly:
+```
+conda create --name uncos_env python=3.10
+conda activate uncos_env
+```
+</details>
+
+Install UncOS directly
 
 ```
 pip install git+https://github.com/FANG-Xiaolin/uncos.git
