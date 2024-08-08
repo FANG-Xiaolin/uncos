@@ -1,7 +1,9 @@
 numpy
 opencv-python
+pyglet<2
 trimesh
 scikit-learn
+scikit-image
 open3d
 seaborn
 segment-anything @ git+https://github.com/facebookresearch/segment-anything.git

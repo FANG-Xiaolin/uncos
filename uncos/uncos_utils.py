@@ -1,9 +1,11 @@
+import os
 import cv2
 import json
 import numpy as np
 from typing import List, Tuple, Dict, Union
 from dataclasses import dataclass, field
 from functools import partial, reduce
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import trimesh
 import open3d as o3d
 import seaborn as sns
@@ -94,12 +96,10 @@ class RegionHypothesis:
                     distinct_mask_scores.append([mask_score])
                     continue
                 which_prevmask_same = np.argsort(mask2d_iou_to_prevmasks)[-1]
-                # logging.info(f'iou2prevhypo mask is {mask2d_iou_to_prevmasks[which_prevmask_same]}')
                 maskid_this_hypothesis.append(which_prevmask_same)
                 distinct_mask_scores[which_prevmask_same].append(mask_score)
 
             if set(maskid_this_hypothesis) in region_hypotheses_2d_corresponding_masks:
-                # logging.info(f'mask id this is {maskid_this_hypothesis}. prev is {region_hypotheses_2d_corresponding_masks}. skip cur')
                 continue
             skip_cur = False
 
@@ -107,10 +107,8 @@ class RegionHypothesis:
             for x_i, x in enumerate(region_hypotheses_2d_corresponding_masks):
                 # may be resulted from volume filter
                 if set(x).issubset(set(maskid_this_hypothesis)):
-                    # logging.info(f'prev set {x} is subset {maskid_this_hypothesis}. pop prev set.')
                     continue
                 if set(maskid_this_hypothesis).issubset(set(x)):
-                    # logging.info(f'cur set {maskid_this_hypothesis} is subset of prev set {x}. skip cur1')
                     skip_cur = True
                 filtered_subsets_id.append(x_i)
             filtered_sets, filtered_scores = [region_hypotheses_2d_corresponding_masks[x_i] for x_i in
@@ -342,8 +340,10 @@ def bfs_cluster(adjacency_matrix, threshold=.5):
     return clusters
 
 ################################## misc utils ###################################
-def point_cloud_from_depth_image_camera_frame(depth_image, camera_intrinsics,
-                                              remove_invalid_points=False):
+def point_cloud_from_depth_image_camera_frame(depth_image, camera_intrinsics, remove_invalid_points=False):
+    """
+    Project depth image back to 3D to obtain partial point cloud.
+    """
     height, width = depth_image.shape
     xmap, ymap = np.meshgrid(np.arange(width), np.arange(height))
     homogenous_coord = np.concatenate((xmap.reshape(1, -1), ymap.reshape(1, -1), np.ones((1, height * width))))
@@ -353,7 +353,6 @@ def point_cloud_from_depth_image_camera_frame(depth_image, camera_intrinsics,
     if remove_invalid_points:
         point_cloud = point_cloud[(point_cloud != 0).any(axis=1)]
     return point_cloud
-
 
 def np_to_trimesh(points, colors=None):
     assert points.shape[-1] == 3
@@ -389,35 +388,15 @@ def visualize_pointcloud(point_cloud: np.ndarray, mask_or_color: Union[np.ndarra
         return pcd_trimesh
     pcd_trimesh.show()
 
-def load_json(path):
-    with open(path, 'r') as f:
-        dt = json.load(f)
-    return dt
-
-def load_data(path):
-    im_data = load_json(path)
-    rgb_im, dep_im = np.array(im_data['rgb_im'], np.uint8).copy(), np.array(im_data['dep_im']).copy()
-    cam_intrinsic = np.array(im_data['camera_intrinsic']).copy()
-
-    rgb_im = rgb_im.astype(np.uint8)
-    dep_im = dep_im.astype(np.float32)
-    im_h, im_w = rgb_im.shape[:2]
-    pcd = point_cloud_from_depth_image_camera_frame(dep_im, cam_intrinsic, remove_invalid_points=False).reshape(im_h, im_w, 3)
-    return rgb_im, pcd
+def load_data_npy(path):
+    data = np.load(path)
+    rgb_image, pcd = data[...,:3].astype(np.uint8).copy(), data[...,3:].copy()
+    return rgb_image, pcd
 
 
-def depim2pointcloud(dep_im, camera_matrix, clip_max=2.5):
-    """
-    :param dep_im: (H, W) float64 numpy.ndarray. Depth image.
-    :param camera_matrix: (3, 3) float64 numpy.ndarray. Camera intrinsic.
-    :param clip_max: float, max depth value.
-    :return: (H, W, 3) float64 numpy.ndarray. Point cloud.
-    """
-    dep_im[dep_im > clip_max] = 0#clip_max
-    height, width = dep_im.shape
-    xmap, ymap = np.meshgrid(np.arange(width), np.arange(height))
-    homogenous_coord = np.concatenate((xmap.reshape(1, -1), ymap.reshape(1, -1), np.ones((1, height * width))))
-    rays = np.linalg.inv(camera_matrix).dot(homogenous_coord)
-    point_cloud = dep_im.reshape(1, height*width) * rays
-    point_cloud = point_cloud.transpose(1, 0).reshape(height, width, 3)
-    return point_cloud
+@contextmanager
+def suppress_stdout_stderr():
+    """A context manager that redirects stdout and stderr to devnull"""
+    with open(os.devnull, 'w') as fnull:
+        with redirect_stderr(fnull) as err, redirect_stdout(fnull) as out:
+            yield (err, out)

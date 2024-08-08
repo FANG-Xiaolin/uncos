@@ -5,11 +5,10 @@ import numpy as np
 import torch
 import torchvision
 from PIL import Image
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
 
 # segment anything
 from segment_anything import build_sam,SamPredictor
-from .uncos_utils import MaskWrapper
+from .uncos_utils import MaskWrapper, suppress_stdout_stderr
 
 import torchvision.transforms as TS
 import matplotlib.pyplot as plt
@@ -43,7 +42,6 @@ class GroundedSAM:
         with suppress_stdout_stderr():
             self.model = self.load_model(config_file, grounding_dino_checkpoint_path)
         self.model = self.model.to(self.device)
-
         self.sam_predictor = SamPredictor(loaded_sam)
 
         # from efficientvit.models.efficientvit.sam import EfficientViTSamPredictor
@@ -107,7 +105,6 @@ class GroundedSAM:
         )
         mask_np = [mask.astype(bool) for mask in masks[:,0].detach().cpu().numpy()]
         score_np = iou_predictions[:,0].detach().cpu().numpy()
-        print(f'{len(mask_np)} masks in groundedsam')
         return [MaskWrapper({'segmentation': mask, 'predicted_iou': score, 'bbox': box.numpy()})
                 for (mask, score, box) in zip(mask_np, score_np, boxes_filt)]
 
@@ -115,7 +112,7 @@ class GroundedSAM:
         args = SLConfig.fromfile(model_config_path)
         args.device = self.device
         model = build_model(args)
-        checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
+        checkpoint = torch.load(model_checkpoint_path, map_location="cpu",weights_only=True)
         model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
         # print(load_res)
         _ = model.eval()
@@ -170,13 +167,6 @@ class GroundedSAM:
         ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0, 0, 0, 0), lw=2))
         ax.text(x0, y0, label)
 
-
-@contextmanager
-def suppress_stdout_stderr():
-    """A context manager that redirects stdout and stderr to devnull"""
-    with open(os.devnull, 'w') as fnull:
-        with redirect_stderr(fnull) as err, redirect_stdout(fnull) as out:
-            yield (err, out)
 
 if __name__=='__main__':
     im = cv2.imread(sys.argv[1])[...,::-1]

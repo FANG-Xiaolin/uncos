@@ -1,13 +1,11 @@
-import logging
 import os
-import json
 import numpy as np
 import numpy.ma as ma
 import scipy.ndimage
 import itertools
 import matplotlib.pyplot as plt
 import cv2
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from functools import reduce
 
 import torch
@@ -17,8 +15,7 @@ import open3d as o3d
 from scipy.optimize import linear_sum_assignment
 from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator
 from .uncos_utils import iou_fn, iom_fn, intersection_fn, bfs_cluster, crop, overlay_masks, \
-    overlay_mask_simple, is_degenerated_mask,  point_cloud_from_depth_image_camera_frame, visualize_pointcloud, \
-    MaskWrapper, SegHypothesis, RegionHypothesis, MIN_AREA_PERCENTAGE
+    overlay_mask_simple, is_degenerated_mask, MaskWrapper, SegHypothesis, RegionHypothesis, MIN_AREA_PERCENTAGE
 from .groundedsam_wrapper import GroundedSAM
 
 IOU_THRES = 0.7
@@ -79,15 +76,14 @@ class UncOS:
             self.grounded_sam_wrapper = GroundedSAM(box_thr=.1, text_thr=.05, loaded_sam=sam)
         # logging.getLogger().setLevel(logging.INFO if not VERBOSE_DEBUG else logging.DEBUG)
 
-    def set_image(self, rgb_im):
+    def set_image(self, rgb_im, pointcloud):
         self.rgb_im = rgb_im
         self.predictor.set_image(rgb_im)
+        self.pcd = pointcloud
 
     def filter_mask_depth(self, masks, depth, threshold=0.3, max_depth=MAX_DEPTH):
-        """ example range
-        depth[0]: [-0.91, 1.37]
-        depth[1]: [-0.88, 0.47]
-        depth[2]: [0.0, 5.0]  ## those == 0 is clipped out
+        """
+            Remove predicted masks that contain objects far from the camera.
         """
         filtered_masks = []
         for i, mask in enumerate(masks):
@@ -95,12 +91,11 @@ class UncOS:
             too_far_percentage = (np.sum(roi_depth > max_depth) + np.sum(roi_depth == 0)) / np.sum(mask())
             if too_far_percentage < threshold:
                 filtered_masks.append(mask)
-        # logging.info(f'filtered out {len(masks) - len(filtered_masks)} from {len(masks)} masks further than {max_depth}m')
         return filtered_masks
 
     def filter_mask_excludemask(self, masks:List[MaskWrapper], exclude_mask:np.ndarray, io_exclude_threshold=0.6) -> List[MaskWrapper]:
         """
-        Remove predicted mask if intersection over mask > threshold.
+        Remove predicted mask if intersection over excluded mask > threshold.
         :param masks: mask in MaskWrapper
         :param exclude_mask: bool type np array
         :param io_exclude_threshold:
@@ -111,18 +106,16 @@ class UncOS:
             io_exclude = (mask().astype(bool) & exclude_mask).astype(np.float32).sum()/mask().sum()
             if io_exclude < io_exclude_threshold:
                 filtered_masks.append(mask)
-        # logging.info(f'filtered out {len(masks) - len(filtered_masks)} from {len(masks)} masks overlapping with excluded region')
         return filtered_masks
 
-    def get_uncertain_areas(self, masks_raw: List[MaskWrapper], iom_thershold=IOU_THRES,
-                             added_masks=None) -> Tuple[List[np.ndarray],List[List]]:
+    def get_uncertain_areas(self, masks_raw: List[MaskWrapper], iom_thershold=IOU_THRES, added_masks=None) -> Tuple[List[np.ndarray],List[List]]:
         """
 
         Args:
             masks: list of masks ( in MaskWrapper )
 
         Returns:
-            1) A list of confident masks
+            1) A list of confident masks. np.ndarray
             2) A list of uncertain regions. An uncertain region contains a list of np.ndarray masks.
         """
         if added_masks is None:
@@ -156,6 +149,12 @@ class UncOS:
         return all_confident_masks, uncertain_regions
 
     def check_is_confident(self, mask: np.ndarray, n_checking_points=5):
+        """
+        Verify confident area. Issue N randomly sampled point queries and check if the returned masks are consistent.
+        :param mask:
+        :param n_checking_points:
+        :return:
+        """
         sampled_points = self.sample_points_in_mask(mask, size=n_checking_points)
         is_confident = True
         all_masks = []
@@ -185,9 +184,10 @@ class UncOS:
 
     def is_same_segmentation(self, hyp1: SegHypothesis, hyp2: SegHypothesis, iou_threshold=.8):
         """
+        Check if two partitions of the same region are equivalent.
         Args:
-            hyp1: SegHypothesis. Contains list of SAM anno format masks.
-            hyp2: SegHypothesis. Contains list of SAM anno format masks.
+            hyp1: SegHypothesis.
+            hyp2: SegHypothesis.
 
         Returns:
             bool. Are they the same segmentation
@@ -211,13 +211,15 @@ class UncOS:
                               ori_uncertain_area,
                               added_mask=None, debug=False,
                               num_neg_points_base=0,
-                              sampled_points_bg=None):
+                              sampled_points_bg=None) -> Union[SegHypothesis,None]:
+        """
+        Generate a segmentation hypothesis for an uncertain region.
+        """
         num_neg_points = num_neg_points_base
         remaining_area = uncertain_area.copy()
         hypothesis = SegHypothesis()
         remaining_area, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud)
         if is_mask_degenerated:
-            logging.warning(f'init mask invalid. add whole area and skip')
             hypothesis.add_part(ori_uncertain_area.copy())
             return hypothesis
         loop_i = 0
@@ -226,13 +228,10 @@ class UncOS:
             remaining_area = remaining_area & ~added_mask
             remaining_area, is_mask_degenerated = is_degenerated_mask(remaining_area,
                                                                 pointcloud=pointcloud)
-            logging.debug(f'add. after add remain {remaining_area.sum()/uncertain_area.sum() if remaining_area is not None else 0}')
         while not is_mask_degenerated:  # or iou_fn(hypothesis.area_mask,uncertain_area)<IOU_THRES:
             if hypothesis.mask_num > 0 and iou_fn(hypothesis.area_mask, ori_uncertain_area) >= .9:
-                logging.debug(f'add is {added_mask is not None}. hyp iou > 0.9. return')
                 return hypothesis
             if loop_i > 30:
-                logging.warning('Loop for 30 times. break. add whole area')
                 wholearea_hypothesis = SegHypothesis()
                 wholearea_hypothesis.add_part(ori_uncertain_area.copy())
                 del hypothesis
@@ -245,7 +244,7 @@ class UncOS:
             try:
                 sampled_point = self.sample_points_in_mask(remaining_area, 1)[0]
             except Exception as e:
-                logging.info(e)
+                print(e)
                 sampled_point = self.sample_points_in_mask(remaining_area, 1, avoid_boundary=False)[0]
             sampled_points_fg = np.array([sampled_point])
             labels = np.array([0 for _ in range(len(sampled_points_bg))] + [1])
@@ -277,59 +276,45 @@ class UncOS:
                             plt.title(mask.score)
                         plt.show()
                         # plt.savefig(f'{time.time()}.png')
-
-                        # logging.info(f'no valid queried masks above score {SCORE_THR}. skip')
                     continue
                 queried_masks.sort(key=lambda x: x[1], reverse=True)
-                for queried_mask_, queried_mask_score in queried_masks:
-                # queried_mask_, queried_mask_score = queried_masks[0] # random.choice(queried_masks) #
-                    queried_mask = queried_mask_()
+                queried_mask_, queried_mask_score = queried_masks[0]
+                queried_mask = queried_mask_()
 
-                    if is_degenerated_mask(queried_mask, pointcloud)[1]:
-                        if debug:
-                            logging.info(f'small or flat')
+                if is_degenerated_mask(queried_mask, pointcloud)[1]:
+                    continue
+                if (queried_mask & uncertain_area).sum() / queried_mask.sum() < IOU_THRES:
+                    if debug:
+                        print('outside of uncertain region')
+                    continue
+                if hypothesis.mask_num >= 1:
+                    iom = [iom_fn(queried_mask, x) for x in hypothesis.masks]
+                    if any(np.array(iom) > IOU_THRES):
                         continue
-                    if (queried_mask & uncertain_area).sum() / queried_mask.sum() < IOU_THRES:
-                        if debug:
-                            print('outside of uncertain region')
+                    intersection = [intersection_fn(queried_mask, x) for x in hypothesis.masks]
+                    if any(np.array(intersection) > INTERSECTION_THRES):
                         continue
-                    if hypothesis.mask_num >= 1:
-                        iom = [iom_fn(queried_mask, x) for x in hypothesis.masks]
-                        if any(np.array(iom) > IOU_THRES):
-                            if debug:
-                                logging.info(f'iom to prev larger than {IOU_THRES}. skip this point query')
-                            # logging.info(f'IOM to prev')
-                            continue
-                        intersection = [intersection_fn(queried_mask, x) for x in hypothesis.masks]
-                        if any(np.array(intersection) > INTERSECTION_THRES):
-                            if debug:
-                                logging.info(f'intersection {intersection}. jump while loop')
-                            continue
-                    hypothesis.add_part(queried_mask, queried_mask_score)
-                    remaining_area = remaining_area & ~queried_mask
-                    remaining_area_, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud)
-                    if remaining_area_ is None:
-                        assert is_mask_degenerated
-                        hypothesis.add_part(remaining_area)
-                    remaining_area = remaining_area_
-                    is_point_query_succeed = True
-                    break
-                if is_point_query_succeed:
-                    break
+                hypothesis.add_part(queried_mask, queried_mask_score)
+                remaining_area = remaining_area & ~queried_mask
+                remaining_area_, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud)
+                if remaining_area_ is None:
+                    assert is_mask_degenerated
+                    hypothesis.add_part(remaining_area)
+                remaining_area = remaining_area_
+                is_point_query_succeed = True
+                break
 
             if not is_point_query_succeed:
                return None
         if (not is_mask_degenerated) or remaining_area is None:
-            if debug:
-                logging.info(f'mask is valid {is_mask_degenerated}. remaining area is None {remaining_area is None}. skip')
             return None
         return hypothesis
 
     def get_hypotheses_of_region(self, uncertain_area, n_result=5, pointcloud=None,
-                                 remove_repeat_hypothesis=True, n_trial_per_query_point=2, debug=False,
+                                 remove_repeat_hypothesis=True, n_trial_per_query_point=3, debug=False,
                                  added_masks=None) -> RegionHypothesis:
         """
-
+        Generate X segmentation hypotheses for an uncertain region.
         Args:
             uncertain_area: np.ndarray. bool mask of uncertain area.
             n_result: number of times to query SAM for hypothesis. If the hypothesis is similar to a previous one,
@@ -351,7 +336,6 @@ class UncOS:
 
         while len(added_masks)>n_result:
             n_result += 2
-        # logging.info(f'add {len(added_masks)} masks. getting {n_result} results')
 
         for nri in range(n_result):
             added_mask = None
@@ -361,10 +345,9 @@ class UncOS:
                                         ori_uncertain_area, added_mask, debug, num_neg_points_base, sampled_points_bg)
             hypotheses.append(hypothesis)
             if len(added_masks)>0 and \
-                    (hypothesis is not None or (len(hypotheses)>0 and all([x is None for x in hypotheses[-2:]]))):
+                    (hypothesis is not None or (len(hypotheses)>0 and all([x is None for x in hypotheses[-3:]]))):
                 added_masks.pop(0)
 
-        # logging.info(f'{len([x for x in hypotheses if x is None])} None out of {len(hypotheses)} result')
         hypotheses = [x for x in hypotheses if x is not None]
         if remove_repeat_hypothesis:
             filtered_hypotheses = []
@@ -381,8 +364,6 @@ class UncOS:
             hypotheses = filtered_hypotheses
 
         if len(hypotheses)==0:
-            if debug:
-                logging.info('NO result. add whole area')
             wholearea_hypothesis = SegHypothesis()
             wholearea_hypothesis.add_part(ori_uncertain_area.copy())
             hypotheses.append(wholearea_hypothesis)
@@ -443,54 +424,68 @@ class UncOS:
             added_masks.append(requeried_mask)
         return added_masks
 
-    def get_table_or_background_mask(self, cloud, include_background=True, table_inlier_thr=TABLE_INLIER_THR, far=3, near=.03,
-                                     init_surface=None):
-        valid_cond = np.logical_and(cloud.reshape(-1,3)[...,2]>near, cloud.reshape(-1,3)[...,2]<far)
-        valid_cond = np.logical_and(valid_cond, ~(np.isnan(cloud.reshape(-1,3)).any(axis=1)))
+    def get_table_or_background_mask(self, point_cloud, include_background=True, table_inlier_thr=TABLE_INLIER_THR,
+                                     far=3, near=.03, fast_inference=True):
+        """
+        Return the mask of table/background/non-foreground area.
+        """
+        print(f'point cloud pre-processing...')
+
+        if (point_cloud.reshape(-1, 3)[..., 2] < near).sum()/point_cloud.reshape(-1, 3).shape[0] > 0.3:
+            frame = 'world'
+            valid_cond = point_cloud.reshape(-1, 3)[..., 2] > -0.1
+        else:
+            frame = 'camera'
+            valid_cond = np.logical_and(point_cloud.reshape(-1, 3)[..., 2] > near, point_cloud.reshape(-1, 3)[..., 2] < far)
+        valid_cond = np.logical_and(valid_cond, ~(np.isnan(point_cloud.reshape(-1, 3)).any(axis=1)))
         valid_idx = np.where(valid_cond)[0] # remove points too close to the camera
 
-        valid_cloud = cloud.reshape(-1,3)[valid_idx]
+        valid_cloud = point_cloud.reshape(-1, 3)[valid_idx]
         cloud_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(valid_cloud))
+        # visualize_pointcloud(valid_cloud, np.full(valid_cloud.shape[0], fill_value=False, dtype=bool))
 
         inliers_idx_in_valid_cloud = []
-        if init_surface is not None:
-            plane_model, inliers_mask = init_surface
-            inliers_idx_in_valid_cloud = np.where(inliers_mask.reshape(-1)[valid_idx])[0]
         while len(inliers_idx_in_valid_cloud)==0:
             plane_model, inliers_idx_in_valid_cloud = cloud_o3d.segment_plane(distance_threshold=table_inlier_thr,
                                                                           ransac_n=3,
                                                                           num_iterations=500)
-
             table_inlier_thr += 0.02
-        # inlier_bool_mask = np.full(valid_cloud.shape[0], fill_value=False, dtype=bool)
-        # inlier_bool_mask[inliers_idx_in_valid_cloud] = True
-        # visualize_pointcloud(valid_cloud, inlier_bool_mask)
-
-        # remove points that are not connected(outside of table)
-        print(f'point cloud pre-processing...')
-        table_plane_cloud =  cloud_o3d.select_by_index(inliers_idx_in_valid_cloud)
-        table_plane_and_other_indices = np.array(table_plane_cloud.cluster_dbscan(eps=.02, min_points = 3))
-        table_plane_and_other_indices[table_plane_and_other_indices == -1] = table_plane_and_other_indices.max()+1
-        largest_part_label = np.bincount(table_plane_and_other_indices).argmax()
-        inliners_to_delete = []
-        for group_id in np.unique(table_plane_and_other_indices):
-            if group_id!=largest_part_label and (table_plane_and_other_indices==group_id).sum()<10000:
-                inliners_to_delete.extend(np.where(table_plane_and_other_indices==group_id)[0].tolist())
-        inliers_idx_in_valid_cloud = np.delete(inliers_idx_in_valid_cloud, inliners_to_delete).astype(np.int64)
         inlier_bool_mask = np.full(valid_cloud.shape[0], fill_value=False, dtype=bool)
         inlier_bool_mask[inliers_idx_in_valid_cloud] = True
         # visualize_pointcloud(valid_cloud, inlier_bool_mask)
 
+        if not fast_inference:
+            # remove points that are not connected(outside of table) e.g. the wall at the back, that is on the plane, but not on the table
+            table_plane_cloud =  cloud_o3d.select_by_index(inliers_idx_in_valid_cloud)
+            table_plane_and_other_indices = np.array(table_plane_cloud.cluster_dbscan(eps=.02, min_points = 3))
+            table_plane_and_other_indices[table_plane_and_other_indices == -1] = table_plane_and_other_indices.max()+1
+            largest_part_label = np.bincount(table_plane_and_other_indices).argmax()
+            inliners_to_delete = []
+            for group_id in np.unique(table_plane_and_other_indices):
+                if group_id!=largest_part_label and (table_plane_and_other_indices==group_id).sum()<10000:
+                    inliners_to_delete.extend(np.where(table_plane_and_other_indices==group_id)[0].tolist())
+            inliers_idx_in_valid_cloud = np.delete(inliers_idx_in_valid_cloud, inliners_to_delete).astype(np.int64)
+            inlier_bool_mask = np.full(valid_cloud.shape[0], fill_value=False, dtype=bool)
+            inlier_bool_mask[inliers_idx_in_valid_cloud] = True
+            # visualize_pointcloud(valid_cloud, inlier_bool_mask)
+
         if include_background:
             a,b,c,d = plane_model
             plane_normal = np.array([a,b,c])
-            if not ((plane_model[2] > 0) and (1.0 - plane_model[2] < 0.1)) and np.dot(plane_normal,np.array([0,0,-1]))<0:
+
+            if frame=='camera' and np.dot(plane_normal,np.array([0,0,1]))>0:
+                # revert if pointing 'into' the table
                 plane_normal *= -1
+            if frame=='world' and np.dot(plane_normal,np.array([0,0,-1]))>0:
+                # revert if pointing to the floor
+                plane_normal *= -1
+
+            # transform table to align with world xy plane
             plane_origin = np.array([0,0,-d/c])
             rotation_matrix_align_plan_with_z = trimesh.points.plane_transform(plane_origin,plane_normal)
             rotated_valid_cloud = rotation_matrix_align_plan_with_z.dot(np.concatenate((valid_cloud.T,np.ones((1,valid_cloud.shape[0])))))
             rotated_valid_cloud = (rotated_valid_cloud/rotated_valid_cloud[-1])[:3].T
-            # visualize_pointcloud(rotated_valid_cloud)
+            # visualize_pointcloud(rotated_valid_cloud, return_trimesh_obj=True)
 
             rotated_trimeshpcd = trimesh.points.PointCloud(rotated_valid_cloud)
             to_origin_transform2d, _ = trimesh.bounds.oriented_bounds(rotated_trimeshpcd[:,:2], ordered=False)
@@ -500,28 +495,30 @@ class UncOS:
 
             rotated_valid_cloud2_xyaligned = to_origin_transform.dot(np.concatenate((rotated_valid_cloud.T,np.ones((1,rotated_valid_cloud.shape[0])))))
             rotated_valid_cloud2_xyaligned = (rotated_valid_cloud2_xyaligned/rotated_valid_cloud2_xyaligned[-1])[:3].T
-            # visualize_pointcloud(rotated_valid_cloud2_xyaligned, inliers_idx_in_valid_cloud)
+            # visualize_pointcloud(rotated_valid_cloud2_xyaligned)
 
+            # remove points outside of the table x y limit
             table_bound_x = rotated_valid_cloud2_xyaligned[inliers_idx_in_valid_cloud,0].min(), rotated_valid_cloud2_xyaligned[inliers_idx_in_valid_cloud,0].max()
             table_bound_y = rotated_valid_cloud2_xyaligned[inliers_idx_in_valid_cloud,1].min(), rotated_valid_cloud2_xyaligned[inliers_idx_in_valid_cloud,1].max()
-            out_of_plane_cond = [rotated_valid_cloud2_xyaligned[:,0]<table_bound_x[0],rotated_valid_cloud2_xyaligned[:,0]>table_bound_x[1],
-                                 rotated_valid_cloud2_xyaligned[:,1]<table_bound_y[0],rotated_valid_cloud2_xyaligned[:,1]>table_bound_y[1],
+            out_of_plane_cond = [rotated_valid_cloud2_xyaligned[:,0]<table_bound_x[0], rotated_valid_cloud2_xyaligned[:,0]>table_bound_x[1],
+                                 rotated_valid_cloud2_xyaligned[:,1]<table_bound_y[0], rotated_valid_cloud2_xyaligned[:,1]>table_bound_y[1],
                                  rotated_valid_cloud2_xyaligned[:,2]<0]
             out_of_bound_idx_in_valid = np.where(reduce(np.logical_or, out_of_plane_cond))[0]
+
             # out of bound is background. mark them as inliers if include_background in returned table mask
-            out_of_bound_mask = np.zeros((cloud.shape[0], cloud.shape[1]))
+            out_of_bound_mask = np.zeros((point_cloud.shape[0], point_cloud.shape[1]))
             out_of_bound_mask = out_of_bound_mask.reshape(-1)
             out_of_bound_mask[valid_idx[out_of_bound_idx_in_valid.tolist()]] = 1
 
             inliers_idx_in_valid_cloud = list(set(out_of_bound_idx_in_valid.tolist()+list(inliers_idx_in_valid_cloud)))
 
-        pred = np.zeros((cloud.shape[0], cloud.shape[1]))
+        pred = np.zeros((point_cloud.shape[0], point_cloud.shape[1]))
         assert pred.shape[1] > 10
         pred = pred.reshape(-1)
         pred[valid_idx[inliers_idx_in_valid_cloud]] = 1
         if include_background:
             pred[np.where(~valid_cond)[0]] = 1
-        pred_hwshape = pred.reshape(*cloud.shape[:2]).astype(bool)
+        pred_hwshape = pred.reshape(*point_cloud.shape[:2]).astype(bool)
         print(f'point cloud pre-processing done.')
         # visualize_pointcloud(cloud.reshape(-1,3), pred_hwshape.reshape(-1))
         return pred_hwshape
@@ -554,10 +551,10 @@ class UncOS:
     def segment_scene(self, rgb_im, pointcloud, table_or_background_mask=None, return_most_likely_only=False,
                       debug=False,
                       n_seg_hypotheses_trial=5,
-                      n_trial_per_query_point=1,
+                      n_trial_per_query_point=3,
                       groundedsam_savepath=None,
                       visualize_hypotheses=False) -> Tuple[List[np.ndarray], List[RegionHypothesis]]:
-        self.set_image(rgb_im)
+        self.set_image(rgb_im, pointcloud)
         im_h, im_w, _ = rgb_im.shape
 
         if table_or_background_mask is None:
@@ -567,16 +564,11 @@ class UncOS:
             print(f'visualizing table and background mask.')
             plt.imshow(table_or_background_mask);plt.show();plt.close()
 
-        import time
-        st = time.time()
-
         if self.add_topdown_highprecision_masks:
             topdown_highprecision_masks = [MaskWrapper({'segmentation': x(), 'predicted_iou':x.score})
                                     for x in self.get_topdown_masks(rgb_im, table_or_background_mask,
                                                                     text_prompt='A rigid object.',
                                                                     save_path=groundedsam_savepath)]
-            print(f'high prec masks {len(topdown_highprecision_masks)}')
-            # logging.debug(f'adding {len(topdown_highprecision_masks)} masks from groundedsam')
         else:
             topdown_highprecision_masks = []
 
@@ -592,9 +584,8 @@ class UncOS:
 
         confident_masks, uncertain_areas = self.get_uncertain_areas(masks,
                                                                   added_masks=topdown_highprecision_masks)
-        # logging.info(f'{len(confident_masks)} init certain masks. {len(uncertain_areas)} init uncertain areas')
         if debug:
-            # print(f'visualizing the confident area')
+            print(f'visualizing the confident area')
             self.visualize_confident_uncertain(confident_masks, [], plot_anno='confident area')
 
         hypotheses = [] # {}
@@ -616,11 +607,7 @@ class UncOS:
                 hypotheses.append(hypotheses_for_area_i)
             else:
                 # add it back to confident_masks if there is only one hypothesis
-                logging.debug(f'only 1 hypotheses. change to certain area')
-                # self.visualize_confident_uncertain([],[hypotheses_for_area_i])
                 confident_masks.extend(hypotheses_for_area_i.masks_union)
-        print(f'time used {time.time()-st}')
-        logging.debug(f'get {len(confident_masks)} certain masks and {len(hypotheses)} final uncertain areas')
         if visualize_hypotheses:
             self.visualize_confident_uncertain(confident_masks, hypotheses)
 
@@ -704,7 +691,7 @@ class UncOS:
                 save_path = 'regions.png'
             plt.savefig(save_path)
 
-    def remove_degenerate(self, masks: List[MaskWrapper], pointcloud):
+    def remove_degenerate(self, masks: List[MaskWrapper], pointcloud) -> List[MaskWrapper]:
         if pointcloud is None:
             return masks
         volumes = []
@@ -721,7 +708,6 @@ class UncOS:
                 continue
             else:
                 non_degenerated_masks.append(masks[i])
-        # logging.info(f'remove {len(masks)-len(non_degenerated_masks)} based on volume')
         return non_degenerated_masks
 
     def dilate(self, mask, kernel_size=3):
@@ -745,6 +731,9 @@ class UncOS:
         return (pts[idx,:])
 
     def masks_from_point_query(self, input_point, input_label=None, return_masknum=1, vis=False) -> List[MaskWrapper]:
+        """
+        Query SAM with point prompts.
+        """
         if input_label is None:
             input_label = np.ones(len(input_point))
         with torch.no_grad():

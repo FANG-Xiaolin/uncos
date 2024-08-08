@@ -21,7 +21,7 @@ International Conference on Intelligent Robots and Systems (IROS) 2024
 
 ![UncOS EOS diagram](assets/eos_uncos_diagram.png?raw=true)
 
-Uncos is an active prompting strategy for combining promptable top-down 
+UncOS is an active prompting strategy for combining promptable top-down 
 and bottom-up pre-trained object instance segmentation methods to obtain 
 a distribution over image-segmentation hypotheses.
 
@@ -29,7 +29,7 @@ Embodied object segmentation code to be added soon. Stayed tuned!
 
 ## Installation
 
-The code is tested with python 3.10, CUDA 12.2, pytorch 2.4.0. CPU-only mode is supported. 
+The code is tested with Python 3.10, CUDA 12.2, and PyTorch 2.4.0. CPU-only mode is supported. 
 <details>
 <summary>(Optional) Create conda environment</summary>
 
@@ -54,19 +54,17 @@ cd uncos; pip install -e .
 
 ## Usage
 
-To retrieve the most likely hypothesis from uncos
+To retrieve the most likely hypothesis from UncOS. 
 ``` 
-# rgb_image:        rgb image in 0-255. H x W x 3
-# pcd:              point cloud in camera frame or world frame. H x W x 3
-# pred_masks_boolarray:  A list of predicted binary masks.
+# rgb_image:        rgb image in 0-255. (H x W x 3) np.uint8.
+# pcd:              point cloud in camera frame or world frame. (H x W x 3) np.float32.
 
 from uncos import UncOS
 uncos = UncOS()
-pred_masks_boolarray, uncertain_hypotheses = uncos.segment_scene(
-    rgb_im, pcd,
-    return_most_likely_only=True, n_seg_hypotheses_trial=5
-)
+pred_masks_boolarray, uncertain_hypotheses = uncos.segment_scene(rgb_im, pcd, return_most_likely_only=True)
 ```
+
+`pred_masks_boolarray` is a list of predicted binary masks. `[(H x W)] np.bool`
 
 Set `return_most_likely_only` to `False` for multiple hypotheses.
 

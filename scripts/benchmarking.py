@@ -17,7 +17,7 @@ import random
 from scipy.optimize import linear_sum_assignment
 
 N_SEG_HYPOTHESES_TRIAL = 5  # 12
-N_TRIAL_PER_QUERY_POINT = 2
+N_TRIAL_PER_QUERY_POINT = 3
 SAVE_DIR = "eval"
 OCID_DIR = "/data2/xiaolinf/sam_probing/OCID-dataset/"
 
@@ -435,6 +435,10 @@ def main():
     save_dir = SAVE_DIR
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
+        os.system(f"cp {os.path.join(os.path.dirname(__file__),'../uncos/uncos.py')} {os.path.join(save_dir,'uncos.py')}")
+        os.system(f"cp {os.path.join(os.path.dirname(__file__), 'benchmarking.py')} {os.path.join(save_dir, 'benchmarking.py')}")
+        os.system(f"cp {os.path.join(os.path.dirname(__file__),'../uncos/groundedsam_wrapper.py')} {os.path.join(save_dir,'groundedsam_wrapper.py')}")
+        os.system(f"cp {os.path.join(os.path.dirname(__file__),'../uncos/uncos_utils.py')} {os.path.join(save_dir,'uncos_utils.py')}")
     logname = 'log'
     log_file_name = os.path.join(save_dir, logname)
     setup_logging(log_file_name)
@@ -453,9 +457,9 @@ def main():
         rgb_im, pointcloud, gt_masks_individual = read_ocid_rgbd_gtmask(rgb_path)
 
         st = time.time()
-        uncos.set_image(rgb_im.copy())
+        uncos.set_image(rgb_im.copy(), pointcloud=pointcloud)
         st1 = time.time()
-        table_mask = uncos.get_table_or_background_mask(pointcloud, include_background=True)
+        table_mask = uncos.get_table_or_background_mask(pointcloud, include_background=True, fast_inference=False)
         logging.info(f'TIME get table {time.time() - st1}')
 
         masks_all_allhypotheses: List[List[np.ndarray]] = []
@@ -475,43 +479,43 @@ def main():
         ################################## evaluation ##################################
 
         logging.info(f'{len(hypotheses)} uncertain regions. {len(masks_all_allhypotheses)} hypotheses.')
-        ############# fscore #############
-        all_hypotheses_eval_results = []
-        for masks in masks_all_allhypotheses:
-            eval_results = eval_pred_to_gt(np.array(masks), np.array(gt_masks_individual))
-            all_hypotheses_eval_results.append(eval_results)
+        # ############# fscore #############
+        # all_hypotheses_eval_results = []
+        # for masks in masks_all_allhypotheses:
+        #     eval_results = eval_pred_to_gt(np.array(masks), np.array(gt_masks_individual))
+        #     all_hypotheses_eval_results.append(eval_results)
         most_likely_hypothesis = itertools.chain(
             *[hypothesis.get_most_likely_hypothesis() for hypothesis in hypotheses])
         ml_masks = list(most_likely_hypothesis) + masks_all_certain
         ml_eval_result = eval_pred_to_gt(np.array(ml_masks), np.array(gt_masks_individual))
 
-        ############# sort and print ###########
-        hypotheses_result_ranking_worsttobest_idx = np.argsort([x['fscore'] for x in all_hypotheses_eval_results])
-        best_idx, worst_idx = hypotheses_result_ranking_worsttobest_idx[-1], hypotheses_result_ranking_worsttobest_idx[
-            0]
-        logging.info(f'best idx {best_idx} worst {worst_idx}')
-        best_hyp_result, worst_hyp_result = all_hypotheses_eval_results[best_idx], \
-                                            all_hypotheses_eval_results[worst_idx]
-        best_hyp_result_logger.add_result(best_hyp_result)
-        worst_hyp_result_logger.add_result(worst_hyp_result)
+        # ############# sort and print ###########
+        # hypotheses_result_ranking_worsttobest_idx = np.argsort([x['fscore'] for x in all_hypotheses_eval_results])
+        # best_idx, worst_idx = hypotheses_result_ranking_worsttobest_idx[-1], hypotheses_result_ranking_worsttobest_idx[
+        #     0]
+        # logging.info(f'best idx {best_idx} worst {worst_idx}')
+        # best_hyp_result, worst_hyp_result = all_hypotheses_eval_results[best_idx], \
+        #                                     all_hypotheses_eval_results[worst_idx]
+        # best_hyp_result_logger.add_result(best_hyp_result)
+        # worst_hyp_result_logger.add_result(worst_hyp_result)
         ml_hyp_result_logger.add_result(ml_eval_result)
 
-        best_hyp_result_logger.print(header='best hypothesis')
-        worst_hyp_result_logger.print(header='worst hypothesis')
+        # best_hyp_result_logger.print(header='best hypothesis')
+        # worst_hyp_result_logger.print(header='worst hypothesis')
         ml_hyp_result_logger.print(header='most likely')
 
         ############ save and visualize ###############
-        if (len(best_hyp_result_logger) - 1) % 50 == 0:
-            save_path = os.path.join(save_dir, f'ocid_{i:04d}_best.png')
-            uncos.visualize_confident_uncertain(masks_all_allhypotheses[best_idx], [], show=False, save_path=save_path,
-                                              plot_anno=f"score {best_hyp_result['fscore']:.2f}|osn {best_hyp_result['fscore_osn']:.2f}"
-                                                        f"|prec {best_hyp_result['precision']:.2f}|rec {best_hyp_result['recall']:.2f}"
-                                                        f"|pred #{best_hyp_result['pred_object_num']}. actual #{best_hyp_result['gt_object_num']}")
-            save_path = os.path.join(save_dir, f'ocid_{i:04d}_worst.png')
-            uncos.visualize_confident_uncertain(masks_all_allhypotheses[worst_idx], [], show=False, save_path=save_path,
-                                              plot_anno=f"score {worst_hyp_result['fscore']:.2f}|osn {worst_hyp_result['fscore_osn']:.2f}"
-                                                        f"|prec {worst_hyp_result['precision']:.2f}|rec {worst_hyp_result['recall']:.2f}"
-                                                        f"|pred #{worst_hyp_result['pred_object_num']}. actual #{worst_hyp_result['gt_object_num']}")
+        if (len(ml_hyp_result_logger) - 1) % 50 == 0:
+            save_path = os.path.join(save_dir, f'ocid_{i:04d}_ml.png')
+            uncos.visualize_confident_uncertain(ml_masks, [], show=False, save_path=save_path,
+                                              plot_anno=f"score {ml_eval_result['fscore']:.2f}|osn {ml_eval_result['fscore_osn']:.2f}"
+                                                        f"|prec {ml_eval_result['precision']:.2f}|rec {ml_eval_result['recall']:.2f}"
+                                                        f"|pred #{ml_eval_result['pred_object_num']}. actual #{ml_eval_result['gt_object_num']}")
+            # save_path = os.path.join(save_dir, f'ocid_{i:04d}_worst.png')
+            # uncos.visualize_confident_uncertain(masks_all_allhypotheses[worst_idx], [], show=False, save_path=save_path,
+            #                                   plot_anno=f"score {worst_hyp_result['fscore']:.2f}|osn {worst_hyp_result['fscore_osn']:.2f}"
+            #                                             f"|prec {worst_hyp_result['precision']:.2f}|rec {worst_hyp_result['recall']:.2f}"
+            #                                             f"|pred #{worst_hyp_result['pred_object_num']}. actual #{worst_hyp_result['gt_object_num']}")
             logging.info(f'save to {save_path}')
 
 
