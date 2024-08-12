@@ -60,7 +60,7 @@ class RegionHypothesis:
 
     def __init__(self, hypotheses: List[SegHypothesis]):
         distinct_masks_bool, distinct_masks_scores, region_hypotheses_corresponding_masks, \
-                region_hypotheses_corresponding_scores = self.create_hypotheses(hypotheses)
+        region_hypotheses_corresponding_scores = self.create_hypotheses(hypotheses)
         self.masks_union: List[np.ndarray] = distinct_masks_bool
         self.masks_union_scores: List = distinct_masks_scores
         self.region_hypotheses_2d_corresponding_masks = region_hypotheses_corresponding_masks
@@ -206,7 +206,7 @@ def crop(im, mask, margin_pixel=10, return_bbox=False, pad_to_square=True):
             minval, maxval = ymin, ymax
             maxlimit = h - 1
         pad_val = abs(xrange - yrange)
-        pad_side1, pad_side2 = pad_val//2, pad_val-pad_val//2
+        pad_side1, pad_side2 = pad_val // 2, pad_val - pad_val // 2
         minval -= pad_side1
         maxval += pad_side2
         if minval < 0:
@@ -367,6 +367,7 @@ def bfs_cluster(adjacency_matrix, threshold=.5):
     np.set_printoptions(suppress=True)
     return clusters
 
+
 ################################## misc utils ###################################
 def point_cloud_from_depth_image_camera_frame(depth_image, camera_intrinsics, remove_invalid_points=False):
     """
@@ -381,6 +382,7 @@ def point_cloud_from_depth_image_camera_frame(depth_image, camera_intrinsics, re
     if remove_invalid_points:
         point_cloud = point_cloud[(point_cloud != 0).any(axis=1)]
     return point_cloud
+
 
 def np_to_trimesh(points, colors=None):
     assert points.shape[-1] == 3
@@ -416,9 +418,10 @@ def visualize_pointcloud(point_cloud: np.ndarray, mask_or_color: Union[np.ndarra
         return pcd_trimesh
     pcd_trimesh.show()
 
+
 def load_data_npy(path):
     data = np.load(path)
-    rgb_image, pcd = data[...,:3].astype(np.uint8).copy(), data[...,3:].copy()
+    rgb_image, pcd = data[..., :3].astype(np.uint8).copy(), data[..., 3:].copy()
     return rgb_image, pcd
 
 

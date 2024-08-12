@@ -17,6 +17,7 @@ from scipy.optimize import linear_sum_assignment
 SAVE_DIR = "eval"
 OCID_DIR = "data/OCID-dataset/"
 
+
 @dataclass
 class SegResultLogger:
     all_fscore_pix: List = field(default_factory=list)
@@ -61,6 +62,7 @@ class SegResultLogger:
             f'\t\tavg recall_osn is {np.mean(self.all_recall_pix)}\t\t \n'
             f'\t\tcorrect num is {np.mean(self.all_correct_num)}\t\t correct obj ratio is {np.mean(self.all_correct_ratio)}\n'
             f'\t\tavg pred num is #{np.mean(self.all_pred_num)}\t\t avg gt num is #{np.mean(self.all_gt_num)}')
+
 
 def eval_pred_to_gt(maskpred, maskgt, osn=True, correct_thr=.75):
     """
@@ -228,10 +230,14 @@ def main():
     save_dir = SAVE_DIR
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-        os.system(f"cp {os.path.join(os.path.dirname(__file__),'../uncos/uncos.py')} {os.path.join(save_dir,'uncos.py')}")
-        os.system(f"cp {os.path.join(os.path.dirname(__file__), 'benchmarking.py')} {os.path.join(save_dir, 'benchmarking.py')}")
-        os.system(f"cp {os.path.join(os.path.dirname(__file__),'../uncos/groundedsam_wrapper.py')} {os.path.join(save_dir,'groundedsam_wrapper.py')}")
-        os.system(f"cp {os.path.join(os.path.dirname(__file__),'../uncos/uncos_utils.py')} {os.path.join(save_dir,'uncos_utils.py')}")
+        os.system(
+            f"cp {os.path.join(os.path.dirname(__file__), '../uncos/uncos.py')} {os.path.join(save_dir, 'uncos.py')}")
+        os.system(
+            f"cp {os.path.join(os.path.dirname(__file__), 'benchmarking.py')} {os.path.join(save_dir, 'benchmarking.py')}")
+        os.system(
+            f"cp {os.path.join(os.path.dirname(__file__), '../uncos/groundedsam_wrapper.py')} {os.path.join(save_dir, 'groundedsam_wrapper.py')}")
+        os.system(
+            f"cp {os.path.join(os.path.dirname(__file__), '../uncos/uncos_utils.py')} {os.path.join(save_dir, 'uncos_utils.py')}")
     logname = 'log'
     log_file_name = os.path.join(save_dir, logname)
     setup_logging(log_file_name)
@@ -252,8 +258,9 @@ def main():
         masks_all_allhypotheses: List[List[np.ndarray]] = []
         uncos.set_image(rgb_im.copy(), pointcloud=pointcloud)
         table_mask = uncos.get_table_or_background_mask(pointcloud, include_background=True, fast_inference=False)
-        masks_all_certain, hypotheses = uncos.segment_scene(rgb_im.copy(), pointcloud=pointcloud, return_most_likely_only=False,
-                                                          table_or_background_mask=table_mask, debug=False)
+        masks_all_certain, hypotheses = uncos.segment_scene(rgb_im.copy(), pointcloud=pointcloud,
+                                                            return_most_likely_only=False,
+                                                            table_or_background_mask=table_mask, debug=False)
         with open(os.path.join(save_dir, f'ocid_{i:04d}_res.pkl'), 'wb') as f:
             pickle.dump([rgb_path, masks_all_certain, hypotheses], f)
 
@@ -276,9 +283,9 @@ def main():
         if (len(ml_hyp_result_logger) - 1) % 50 == 0:
             save_path = os.path.join(save_dir, f'ocid_{i:04d}_ml.png')
             uncos.visualize_confident_uncertain(ml_masks, [], show=False, save_path=save_path,
-                                              plot_anno=f"fscore_osn {ml_eval_result['fscore_osn']:.2f}"
-                                                        f"|pred obj num #{ml_eval_result['pred_object_num']}. "
-                                                        f"actual #{ml_eval_result['gt_object_num']}")
+                                                plot_anno=f"fscore_osn {ml_eval_result['fscore_osn']:.2f}"
+                                                          f"|pred obj num #{ml_eval_result['pred_object_num']}. "
+                                                          f"actual #{ml_eval_result['gt_object_num']}")
             logging.info(f'save to {save_path}')
 
 

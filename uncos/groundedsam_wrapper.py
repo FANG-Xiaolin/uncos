@@ -7,7 +7,7 @@ import torchvision
 from PIL import Image
 
 # segment anything
-from segment_anything import build_sam,SamPredictor
+from segment_anything import build_sam, SamPredictor
 from .uncos_utils import MaskWrapper, suppress_stdout_stderr
 
 import torchvision.transforms as TS
@@ -19,13 +19,15 @@ from groundingdino.models import build_model
 from groundingdino.util.slconfig import SLConfig
 from groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
 
+
 # refac from https://github.com/IDEA-Research/Grounded-Segment-Anything/blob/main/automatic_label_ram_demo.py
 class GroundedSAM:
     def __init__(self, box_thr, text_thr, loaded_sam):
         import groundingdino.config.GroundingDINO_SwinT_OGC
         config_file = groundingdino.config.GroundingDINO_SwinT_OGC.__file__
         cache_dir = os.path.expanduser("~/.cache/uncos")
-        grounding_dino_checkpoint_path = os.path.join(cache_dir, 'groundingdino_swint_ogc.pth')  # change the path of the model
+        grounding_dino_checkpoint_path = os.path.join(cache_dir,
+                                                      'groundingdino_swint_ogc.pth')  # change the path of the model
         if not os.path.exists(grounding_dino_checkpoint_path):
             os.makedirs(cache_dir, exist_ok=True)
             print(f'Downloading GroundingDINO checkpoint to {grounding_dino_checkpoint_path}.')
@@ -33,8 +35,8 @@ class GroundedSAM:
                 'https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth',
                 grounding_dino_checkpoint_path)
 
-        self.box_threshold = box_thr #0.3
-        self.text_threshold = text_thr #0.05
+        self.box_threshold = box_thr  # 0.3
+        self.text_threshold = text_thr  # 0.05
         self.iou_threshold = 0.5
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -45,11 +47,11 @@ class GroundedSAM:
         self.sam_predictor = SamPredictor(loaded_sam)
 
         normalize = TS.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
+                                 std=[0.229, 0.224, 0.225])
         self.transform = TS.Compose([
-                        TS.Resize((384, 384)),
-                        TS.ToTensor(), normalize
-                    ])
+            TS.Resize((384, 384)),
+            TS.ToTensor(), normalize
+        ])
 
     def load_image(self, image_rgb_255):
         # load image
@@ -69,7 +71,7 @@ class GroundedSAM:
         # load image
         image_pil, image_normalized = self.load_image(image_rgb_255)
         image_rgb_255 = np.array(image_pil)
-        tags=text_prompt
+        tags = text_prompt
         # run grounding dino model
         boxes_filt, scores, pred_phrases = self.get_grounding_output(
             image_normalized, tags
@@ -89,18 +91,19 @@ class GroundedSAM:
         boxes_filt = boxes_filt[nms_idx]
         pred_phrases = [pred_phrases[idx] for idx in nms_idx]
 
-        if len(boxes_filt)==0:
+        if len(boxes_filt) == 0:
             return []
 
-        transformed_boxes = self.sam_predictor.transform.apply_boxes_torch(boxes_filt, image_rgb_255.shape[:2]).to(self.device)
+        transformed_boxes = self.sam_predictor.transform.apply_boxes_torch(boxes_filt, image_rgb_255.shape[:2]).to(
+            self.device)
         masks, iou_predictions, _ = self.sam_predictor.predict_torch(
-            point_coords = None,
-            point_labels = None,
-            boxes = transformed_boxes.to(self.device),
-            multimask_output = False,
+            point_coords=None,
+            point_labels=None,
+            boxes=transformed_boxes.to(self.device),
+            multimask_output=False,
         )
-        mask_np = [mask.astype(bool) for mask in masks[:,0].detach().cpu().numpy()]
-        score_np = iou_predictions[:,0].detach().cpu().numpy()
+        mask_np = [mask.astype(bool) for mask in masks[:, 0].detach().cpu().numpy()]
+        score_np = iou_predictions[:, 0].detach().cpu().numpy()
         return [MaskWrapper({'segmentation': mask, 'predicted_iou': score, 'bbox': box.numpy()})
                 for (mask, score, box) in zip(mask_np, score_np, boxes_filt)]
 
@@ -108,7 +111,7 @@ class GroundedSAM:
         args = SLConfig.fromfile(model_config_path)
         args.device = self.device
         model = build_model(args)
-        checkpoint = torch.load(model_checkpoint_path, map_location="cpu",weights_only=True)
+        checkpoint = torch.load(model_checkpoint_path, map_location="cpu", weights_only=True)
         model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
         # print(load_res)
         _ = model.eval()
@@ -164,14 +167,15 @@ class GroundedSAM:
         ax.text(x0, y0, label)
 
 
-if __name__=='__main__':
-    im = cv2.imread(sys.argv[1])[...,::-1]
+if __name__ == '__main__':
+    im = cv2.imread(sys.argv[1])[..., ::-1]
 
     # TEXT_PROMPT = 'A rigid object.'
     BBOX_THR = .15
     TEXT_THR = .05
-    sam_checkpoint = os.path.join('data','sam_vit_h_4b8939.pth')
-    loaded_sam = build_sam(checkpoint=sam_checkpoint).to(torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
+    sam_checkpoint = os.path.join('data', 'sam_vit_h_4b8939.pth')
+    loaded_sam = build_sam(checkpoint=sam_checkpoint).to(
+        torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     grounded_sam_ram = GroundedSAM(BBOX_THR, TEXT_THR, loaded_sam)
     output_sammasks = grounded_sam_ram.process_image(im, text_prompt='A rigid object.')
     for output_mask in output_sammasks:
