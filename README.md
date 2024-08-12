@@ -6,14 +6,14 @@
 [Leslie Pack Kaelbling](https://people.csail.mit.edu/lpk/), and
 [Tomás Lozano-Pérez](https://people.csail.mit.edu/tlp/)
 <br />
-International Conference on Intelligent Robots and Systems (IROS) 2024
+IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) 2024
 <br />
-[[Paper]]()
+[[Paper]](https://arxiv.org/abs/2408.04760)
 [[Website]](https://sites.google.com/view/embodied-uncertain-seg)
 ```
 @inproceedings{Fang2024Uncos,
   title={{Embodied Uncertainty-Aware Object Segmentation}},
-  author={Xiaolin Fang and Leslie Pack Kaelbing and Tomas Lozano-Perez},
+  author={Xiaolin Fang and Leslie Pack Kaelbing and Tomás Lozano-Pérez},
   booktitle={IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
   year={2024}
 }
@@ -22,8 +22,11 @@ International Conference on Intelligent Robots and Systems (IROS) 2024
 ![UncOS EOS diagram](assets/eos_uncos_diagram.png?raw=true)
 
 UncOS is an active prompting strategy for combining promptable top-down 
-and bottom-up pre-trained object instance segmentation methods to obtain 
-a distribution over image-segmentation hypotheses.
+and bottom-up pre-trained large models to obtain 
+a distribution over image-segmentation hypotheses. We can either query 
+the most likely hypothesis from UncOS or use all the 
+hypotheses as a basis for downstream applications, such as embodied
+object segmentation / active information gathering.
 
 Embodied object segmentation code to be added soon. Stayed tuned!
 
@@ -52,7 +55,16 @@ git clone git@github.com:FANG-Xiaolin/uncos.git
 cd uncos; pip install -e .
 ```
 
+
 ## Usage
+
+We've provided a few testing examples in `demo_files`. Add `-v` 
+to visualize the results, `-m` to return the most likely segmentation 
+hypothesis.
+
+```
+python scripts/demo.py -v
+```
 
 To retrieve the most likely hypothesis from UncOS. 
 ``` 
@@ -74,4 +86,24 @@ To visualize the result
 uncos.visualize_confident_uncertain(pred_masks_boolarray, uncertain_hypotheses)
 # # or save to file
 # uncos.visualize_confident_uncertain(pred_masks_boolarray, uncertain_hypotheses, show=False, save_path='demo_result.png')
+```
+
+### Benchmarking
+
+<details>
+<summary>Download the OCID dataset</summary>
+
+- Download the file from [here](https://researchdata.tuwien.at/records/pcbjd-4wa12) and unzip it.
+
+- You may need to manually correct a folder name 
+
+    ```
+    cd OCID-dataset/ARID10/floor/bottom/fruits/seq37/
+    mv pd pcd
+    ```
+</details>
+
+Specify the path to
+```
+python scripts/benchmarking.py
 ```

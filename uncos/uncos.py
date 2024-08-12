@@ -587,80 +587,6 @@ class UncOS:
             return confident_masks, []
 
         return confident_masks, hypotheses
-
-    def visualize_confident_uncertain(self, confident_masks: List[np.ndarray], region_hypotheses:List[RegionHypothesis],
-                                      show=True, save_path=None, plot_anno=None):
-        all_visualize = []
-        certain_parts_union = reduce(np.logical_or, confident_masks) if len(confident_masks) > 0 \
-            else np.zeros_like(self.rgb_im)[...,0].astype(bool)
-        overlayed_certain_union = overlay_mask_simple(self.rgb_im, certain_parts_union)
-        overlayed_certain_separate = overlay_masks(self.rgb_im, confident_masks,  # colors=(0,255,0),
-                                                   contour_width=4, paint_area=True)
-        all_visualize.append([overlayed_certain_union, [], [[overlayed_certain_separate,0]]])
-        if self.pcd is not None:
-            all_visualize[-1][-1].append([self.pcd[...,2],0])
-
-        for r_i, region_hypothesis in enumerate(region_hypotheses):
-            union_mask = region_hypothesis.area_mask
-            overlayed_union = overlay_mask_simple(crop(self.rgb_im, union_mask), crop(union_mask, union_mask))
-            cv2.putText(overlayed_union, f'region {r_i}', (0, 20), fontScale=.3, color=(1, 1, 1), thickness=1,
-                            lineType=cv2.LINE_AA,
-                            fontFace=cv2.FONT_HERSHEY_COMPLEX)
-            region_hyp = [overlayed_union]
-            distinct_masks = []
-            for distinct_mask_i, mask_distinct in enumerate(region_hypothesis.masks_union):
-                overlayed_distinct_i = overlay_mask_simple(crop(self.rgb_im, union_mask), crop(mask_distinct, union_mask))
-                cv2.putText(overlayed_distinct_i, f'{distinct_mask_i}', (0, 20), fontScale=.3, color=(1, 1, 1), thickness=1,
-                            lineType=cv2.LINE_AA,
-                            fontFace=cv2.FONT_HERSHEY_COMPLEX)
-                distinct_masks.append(overlayed_distinct_i)
-            region_hyp.append(distinct_masks)
-            overlayed_hyp = []
-            for (hyp_i_mask_ids,hyp_i_score) in zip(region_hypothesis.region_hypotheses_2d_corresponding_masks,
-                                                     region_hypothesis.region_hypotheses_2d_corresponding_scores):
-                masks = [region_hypothesis.masks_union[i] for i in hyp_i_mask_ids]
-                overlayed_separate = overlay_masks(crop(self.rgb_im, union_mask), [crop(x,union_mask) for x in masks],
-                                                   plot_anno=f'{hyp_i_mask_ids}\nscore {hyp_i_score:.2f}')
-                overlayed_hyp.append([overlayed_separate, hyp_i_score])
-            overlayed_hyp.sort(key=lambda x:x[1], reverse=True)
-            region_hyp.append(overlayed_hyp)
-            all_visualize.append(region_hyp)
-
-        total_row = len(all_visualize)
-        total_maskunion = max([len(row_x[1]) for row_x in all_visualize])
-        total_overlayed_hyp = max([len(row_x[2]) for row_x in all_visualize])
-        total_col = 1+total_maskunion+total_overlayed_hyp
-
-        row_col_to_n = lambda row_0index, col_0index: row_0index*total_col+col_0index+1
-
-        plt.figure(figsize=(6.4 * 3, 4.8 * 3))
-        for row_i, visualize_rowi in enumerate(all_visualize):
-            plt.subplot(total_row, total_col, row_col_to_n(row_i, 0))
-            plt.imshow(visualize_rowi[0])
-            plt.axis('off')
-
-            visualize_rowi_maskunion = visualize_rowi[1]
-            for col_j, fig_ij in enumerate(visualize_rowi_maskunion):
-                plt.subplot(total_row, total_col, row_col_to_n(row_i, col_j+1))
-                plt.imshow(fig_ij)
-                plt.axis('off')
-
-            visualize_rowi_overlayedhyp = visualize_rowi[2]
-            for col_j, fig_ij in enumerate(visualize_rowi_overlayedhyp):
-                plt.subplot(total_row, total_col, row_col_to_n(row_i, col_j+1+total_maskunion))
-                plt.imshow(fig_ij[0])
-                plt.axis('off')
-        if plot_anno is not None:
-            plt.suptitle(plot_anno)
-        plt.tight_layout(pad=0.01)
-
-        if show:
-            plt.show()
-        else:
-            if save_path is None:
-                save_path = 'regions.png'
-            plt.savefig(save_path)
-
     def remove_degenerate(self, masks: List[MaskWrapper], pointcloud) -> List[MaskWrapper]:
         if pointcloud is None:
             return masks
@@ -728,3 +654,82 @@ class UncOS:
             mask_list.append(MaskWrapper({'segmentation':mask, 'predicted_iou':score}))
         mask_list.sort(key=lambda x: x.score, reverse=True)
         return mask_list[:return_masknum]
+
+    def visualize_confident_uncertain(self, confident_masks: List[np.ndarray], region_hypotheses:List[RegionHypothesis],
+                                      show=True, save_path=None, plot_anno=None):
+        all_visualize = []
+        confident_parts_union = reduce(np.logical_or, confident_masks) if len(confident_masks) > 0 \
+            else np.zeros_like(self.rgb_im)[...,0].astype(bool)
+        overlayed_certain_union = overlay_mask_simple(self.rgb_im, confident_parts_union)
+        overlayed_certain_separate = overlay_masks(self.rgb_im, confident_masks,  # colors=(0,255,0),
+                                                   contour_width=4, paint_area=True)
+        all_visualize.append([['Confident regions',overlayed_certain_union], [], [['confident masks', overlayed_certain_separate,0]]])
+        if self.pcd is not None:
+            vis_dep = self.pcd[...,2]
+            vis_dep[vis_dep>3] = 0
+            all_visualize[-1][-1].append(['dep',vis_dep,0])
+
+        for r_i, region_hypothesis in enumerate(region_hypotheses):
+            union_mask = region_hypothesis.area_mask
+            overlayed_union = overlay_mask_simple(crop(self.rgb_im, union_mask), crop(union_mask, union_mask))
+            # cv2.putText(overlayed_union, f'region {r_i}', (0, 20), fontScale=.3, color=(1, 1, 1), thickness=1,
+            #                 lineType=cv2.LINE_AA,
+            #                 fontFace=cv2.FONT_HERSHEY_COMPLEX)
+            region_hyp = [[f'Uncertain region {r_i}',overlayed_union]]
+            distinct_masks = []
+            for distinct_mask_i, mask_distinct in enumerate(region_hypothesis.masks_union):
+                overlayed_distinct_i = overlay_mask_simple(crop(self.rgb_im, union_mask), crop(mask_distinct, union_mask))
+                # cv2.putText(overlayed_distinct_i, f'{distinct_mask_i}', (0, 20), fontScale=.3, color=(1, 1, 1), thickness=1,
+                #             lineType=cv2.LINE_AA,
+                #             fontFace=cv2.FONT_HERSHEY_COMPLEX)
+                overlayed_distinct_i = [f'Piece {distinct_mask_i}', overlayed_distinct_i]
+                distinct_masks.append(overlayed_distinct_i)
+            region_hyp.append(distinct_masks)
+            overlayed_hyp = []
+            for (hyp_i_mask_ids,hyp_i_score) in zip(region_hypothesis.region_hypotheses_2d_corresponding_masks,
+                                                     region_hypothesis.region_hypotheses_2d_corresponding_scores):
+                masks = [region_hypothesis.masks_union[i] for i in hyp_i_mask_ids]
+                overlayed_separate = overlay_masks(crop(self.rgb_im, union_mask), [crop(x,union_mask) for x in masks],
+                                                   plot_anno=None)
+                overlayed_hyp.append([f'Combo piece {[int(k) for k in hyp_i_mask_ids]}\nscore {hyp_i_score:.2f}',overlayed_separate, hyp_i_score])
+            overlayed_hyp.sort(key=lambda x:x[2], reverse=True)
+            region_hyp.append(overlayed_hyp)
+            all_visualize.append(region_hyp)
+
+        total_row = len(all_visualize)
+        total_maskunion = max([len(row_x[1]) for row_x in all_visualize])
+        total_overlayed_hyp = max([len(row_x[2]) for row_x in all_visualize])
+        total_col = 1+total_maskunion+total_overlayed_hyp
+
+        row_col_to_n = lambda row_0index, col_0index: row_0index*total_col+col_0index+1
+
+        plt.figure(figsize=(6.4 * 3, 4.8 * 3))
+        for row_i, visualize_rowi in enumerate(all_visualize):
+            plt.subplot(total_row, total_col, row_col_to_n(row_i, 0))
+            plt.imshow(visualize_rowi[0][1])
+            plt.title(visualize_rowi[0][0])
+            plt.axis('off')
+
+            visualize_rowi_maskunion = visualize_rowi[1]
+            for col_j, fig_ij in enumerate(visualize_rowi_maskunion):
+                plt.subplot(total_row, total_col, row_col_to_n(row_i, col_j+1))
+                plt.imshow(fig_ij[1])
+                plt.title(fig_ij[0])
+                plt.axis('off')
+
+            visualize_rowi_overlayedhyp = visualize_rowi[2]
+            for col_j, fig_ij in enumerate(visualize_rowi_overlayedhyp):
+                plt.subplot(total_row, total_col, row_col_to_n(row_i, col_j+1+total_maskunion))
+                plt.imshow(fig_ij[1])
+                plt.title(fig_ij[0])
+                plt.axis('off')
+        if plot_anno is not None:
+            plt.suptitle(plot_anno)
+        plt.tight_layout(pad=0.01)
+
+        if show:
+            plt.show()
+        else:
+            if save_path is None:
+                save_path = 'uncos_result.png'
+            plt.savefig(save_path)

@@ -189,11 +189,39 @@ def overlay_mask_simple(rgb_im, mask: np.ndarray, colors=None, mask_alpha=.5):
     return (rgb_im * (1 - mask_alpha) + mask[..., np.newaxis] * colors * mask_alpha).copy()
 
 
-def crop(im, mask, margin_pixel=10, return_bbox=False):
+def crop(im, mask, margin_pixel=10, return_bbox=False, pad_to_square=True):
     h, w = im.shape[:2]
     bbox_y, bbox_x = np.where(mask > 0)
     ymin, ymax, xmin, xmax = max(0, bbox_y.min() - margin_pixel), min(bbox_y.max() + margin_pixel, h), \
                              max(0, bbox_x.min() - margin_pixel), min(bbox_x.max() + margin_pixel, w)
+    if pad_to_square:
+        xrange = xmax - xmin
+        yrange = ymax - ymin
+        if xrange < yrange:
+            short_edge = 'x'
+            minval, maxval = xmin, xmax
+            maxlimit = w - 1
+        else:
+            short_edge = 'y'
+            minval, maxval = ymin, ymax
+            maxlimit = h - 1
+        pad_val = abs(xrange - yrange)
+        pad_side1, pad_side2 = pad_val//2, pad_val-pad_val//2
+        minval -= pad_side1
+        maxval += pad_side2
+        if minval < 0:
+            shift_delta = abs(minval)
+            maxval += shift_delta
+            minval = 0
+        elif maxval > maxlimit:
+            shift_delta = maxval - maxlimit
+            maxval = maxlimit
+            minval -= shift_delta
+        if short_edge == 'x':
+            xmin, xmax = minval, maxval
+        else:
+            ymin, ymax = minval, maxval
+
     if return_bbox:
         return im[ymin:ymax, xmin:xmax], ymin, ymax, xmin, xmax
     return im[ymin:ymax, xmin:xmax]
