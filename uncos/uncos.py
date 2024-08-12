@@ -47,21 +47,6 @@ class UncOS:
         # 1024 x 1024 is the input size for SAM pretrained model
         self.mask_generator = SamAutomaticMaskGenerator(sam, min_mask_region_area=int(MIN_AREA_PERCENTAGE*1024*1024))
 
-        # # efficient VIT
-        # efficientvitsam_ckpt_path = os.path.join(os.path.dirname(__file__), "xl1.pt")
-        # if not os.path.exists(efficientvitsam_ckpt_path):
-        #     torch.hub.download_url_to_file(
-        #         'https://huggingface.co/mit-han-lab/efficientvit-sam/resolve/main/xl1.pt',
-        #         efficientvitsam_ckpt_path)
-        # from efficientvit.sam_model_zoo import create_sam_model
-        # from efficientvit.models.efficientvit.sam import EfficientViTSamPredictor, EfficientViTSamAutomaticMaskGenerator
-        # efficientvit_sam = create_sam_model(
-        #     name="xl1", weight_url="xl1.pt",
-        # )
-        # sam = efficientvit_sam.cuda().eval()
-        # self.predictor = EfficientViTSamPredictor(sam)
-        # self.mask_generator = EfficientViTSamAutomaticMaskGenerator(sam, min_mask_region_area=int(MIN_AREA_PERCENTAGE*1024*1024))
-
         if initialize_tracker:
             raise NotImplementedError
             # # TODO. remove from the minimal uncos repo (if not doing EOS). use submodule.
@@ -448,7 +433,7 @@ class UncOS:
         while len(inliers_idx_in_valid_cloud)==0:
             plane_model, inliers_idx_in_valid_cloud = cloud_o3d.segment_plane(distance_threshold=table_inlier_thr,
                                                                           ransac_n=3,
-                                                                          num_iterations=500)
+                                                                          num_iterations=50 if fast_inference else 500)
             table_inlier_thr += 0.02
         inlier_bool_mask = np.full(valid_cloud.shape[0], fill_value=False, dtype=bool)
         inlier_bool_mask[inliers_idx_in_valid_cloud] = True
@@ -527,32 +512,18 @@ class UncOS:
         table_mask = self.grounded_sam_wrapper.process_image(self.rgb_im, text_prompt='table surface,wall,floor')
         return reduce(np.logical_or,[x() for x in table_mask])
 
-    def get_topdown_masks(self, rgb_im, exclude_background_mask, text_prompt, save_path=None):
+    def get_topdown_masks(self, rgb_im, exclude_background_mask, text_prompt):
         masks_all_certain_raw_sammask = self.grounded_sam_wrapper.process_image(rgb_im, text_prompt=text_prompt)
         masks_all_certain_sammask = [mask for mask in masks_all_certain_raw_sammask if
                                      np.logical_and(mask(), exclude_background_mask).sum() / mask().sum() < 0.8]
         filtered_mask = [x for x in masks_all_certain_sammask if x.score > SCORE_THR]
         masks_all_certain_sammask = filtered_mask
-        if save_path is not None:
-            # draw output image
-            plt.figure(figsize=(10, 10))
-            plt.imshow(rgb_im)
-            for mask in masks_all_certain_sammask:
-                self.grounded_sam_wrapper.show_mask(mask(), plt.gca(), random_color=True)
-                self.grounded_sam_wrapper.show_box(mask.rawmask['bbox'], plt.gca(), '')
-            plt.axis('off')
-            if not os.path.exists(os.path.dirname(save_path)):
-                os.makedirs(os.path.dirname(save_path))
-            plt.tight_layout(pad=0.1)
-            plt.savefig(save_path)
-            # plt.show()
         return masks_all_certain_sammask
 
     def segment_scene(self, rgb_im, pointcloud, table_or_background_mask=None, return_most_likely_only=False,
                       debug=False,
                       n_seg_hypotheses_trial=5,
                       n_trial_per_query_point=3,
-                      groundedsam_savepath=None,
                       visualize_hypotheses=False) -> Tuple[List[np.ndarray], List[RegionHypothesis]]:
         self.set_image(rgb_im, pointcloud)
         im_h, im_w, _ = rgb_im.shape
@@ -567,8 +538,7 @@ class UncOS:
         if self.add_topdown_highprecision_masks:
             topdown_highprecision_masks = [MaskWrapper({'segmentation': x(), 'predicted_iou':x.score})
                                     for x in self.get_topdown_masks(rgb_im, table_or_background_mask,
-                                                                    text_prompt='A rigid object.',
-                                                                    save_path=groundedsam_savepath)]
+                                                                    text_prompt='A rigid object.')]
         else:
             topdown_highprecision_masks = []
 

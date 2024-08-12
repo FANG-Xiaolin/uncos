@@ -44,10 +44,6 @@ class GroundedSAM:
         self.model = self.model.to(self.device)
         self.sam_predictor = SamPredictor(loaded_sam)
 
-        # from efficientvit.models.efficientvit.sam import EfficientViTSamPredictor
-        # self.sam_predictor = EfficientViTSamPredictor(loaded_sam)
-
-        # initialize Recognize Anything Model
         normalize = TS.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
         self.transform = TS.Compose([
