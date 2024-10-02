@@ -27,7 +27,7 @@ VERBOSE_DEBUG = False
 
 
 class UncOS:
-    def __init__(self, add_topdown=True, initialize_tracker=False, device=None):
+    def __init__(self, add_topdown=True, initialize_tracker=False, device=None, take_union_if_uncertain=False):
         self.rgb_im = None
         self.pcd = None
         if device is None:
@@ -61,6 +61,7 @@ class UncOS:
         if add_topdown:
             self.grounded_sam_wrapper = GroundedSAM(box_thr=.1, text_thr=.05, loaded_sam=sam)
         # logging.getLogger().setLevel(logging.INFO if not VERBOSE_DEBUG else logging.DEBUG)
+        self.take_union_if_uncertain = take_union_if_uncertain
 
     def set_image(self, rgb_im, pointcloud):
         self.rgb_im = rgb_im
@@ -120,6 +121,10 @@ class UncOS:
         all_confident_masks, uncertain_regions = [], []
         for cluster in clusters:
             ucr = [masks[i]() for i in cluster]
+            if self.take_union_if_uncertain:
+                # baseline: take union of mask if overlap. Works well if objects are isolated.
+                all_confident_masks.append(self.get_union_mask(ucr))
+                continue
             if len(cluster) == 1:
                 if list(cluster)[0] < len(masks_raw):
                     # is a predicted mask
