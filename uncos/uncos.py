@@ -194,20 +194,91 @@ class UncOS:
         masks_2 = hyp2.masks
         iou_matrix = np.array([[iou_fn(s_i, s_j) for s_j in masks_2] for s_i in masks_1])
         if len(iou_matrix.shape) != 2:
-            import pdb;
-            pdb.set_trace()
+            breakpoint()
         row_ind, col_ind = linear_sum_assignment(iou_matrix, maximize=True)
         mean_iou = iou_matrix[row_ind, col_ind].mean()
         if mean_iou > iou_threshold:
             return True
         return False
 
+    def make_point_query(self, uncertain_area, pointcloud, hypothesis, sampled_points, sampled_points_labels, split=False, debug=False):
+        """
+        Return one valid segmentation mask from a set of sampled (positive and negative) prompt points
+        Return None if there is no valid mask from the set of point queries
+        Args:
+            sampled_points
+        Returns:
+            queried_mask :          A binary mask for the point queries. H x W
+            queried_mask_score :    A scalar score (predicted IoU from SAM) for the returned mask
+            if no valid mask, return (None, None)
+        """
+        queried_masks_all = self.masks_from_point_query(sampled_points, input_label=sampled_points_labels, vis=False, return_masknum=3)
+        queried_masks = [(mask, mask.score) for mask in queried_masks_all if mask.score > SCORE_THR]
+        if len(queried_masks) == 0:
+            if debug:
+                plt.figure(figsize=(18, 6))
+                for i, mask in enumerate(queried_masks_all):
+                    plt.subplot(1, len(queried_masks_all), i + 1)
+                    m1 = overlay_mask_simple(self.rgb_im, mask())
+                    for sampled_point in sampled_points:
+                        cv2.circle(m1, tuple(sampled_point), radius=5, color=(0, 0, 1.))
+                    plt.imshow(m1)
+                    plt.title(mask.score)
+                plt.show()
+                # plt.savefig(f'{time.time()}.png')
+
+                # logging.info(f'no valid queried masks above score {SCORE_THR}. skip')
+            return None, None
+        queried_masks.sort(key=lambda x: x[1], reverse=True)
+        queried_mask_, queried_mask_score = queried_masks[0]
+        queried_mask = queried_mask_()
+
+        if is_degenerated_mask(queried_mask, pointcloud)[1]:
+            return None, None
+        if (queried_mask & uncertain_area).sum() / queried_mask.sum() < IOU_THRES:
+            if debug:
+                print('outside of uncertain region')
+            return None, None
+        if hypothesis.mask_num >= 1:
+            iom = np.array([iom_fn(queried_mask, x) for x in hypothesis.masks])
+            overlapped = np.where(iom > IOU_THRES)[0]
+            if len(overlapped) > 0:
+                if split and len(
+                        np.where(np.array([iou_fn(queried_mask, x) for x in hypothesis.masks]) > IOU_THRES)[0]) == 0:
+                    for overlap_mask_idx in overlapped:
+                        is_query_smaller = queried_mask.sum() < hypothesis.masks[overlap_mask_idx].sum()
+                        if not is_query_smaller:
+                            # TODO: set-based subtraction
+                            queried_mask = queried_mask & ~hypothesis.masks[overlap_mask_idx]
+                            remaining_area_subtractedmask, is_mask_degenerated_subtractedmask = is_degenerated_mask(
+                                queried_mask,
+                                pointcloud=pointcloud)
+                            if is_mask_degenerated_subtractedmask:
+                                return None, None
+                            # else:
+                            #     break
+                        else:
+                            hypothesis.masks[overlap_mask_idx] = hypothesis.masks[overlap_mask_idx] & ~queried_mask
+                            remaining_area_prevmask, is_mask_degenerated_prevmask = is_degenerated_mask(hypothesis.masks[overlap_mask_idx],
+                                                                                       pointcloud=pointcloud)
+                            if is_mask_degenerated_prevmask:
+                                return None, None
+                else:
+                    return None, None
+            intersection = [intersection_fn(queried_mask, x) for x in hypothesis.masks]
+            if not split:
+                if any(np.array(intersection) > INTERSECTION_THRES):
+                    return None, None
+        return queried_mask, queried_mask_score
+
+
     def generate_a_hypothesis(self, uncertain_area, pointcloud,
                               n_trial_per_query_point,
                               ori_uncertain_area,
                               added_mask=None, debug=False,
                               num_neg_points_base=0,
-                              sampled_points_bg=None) -> Union[SegHypothesis, None]:
+                              sampled_points_bg=None,
+                              split=False) -> Union[SegHypothesis, None]:
         """
         Generate a segmentation hypothesis for an uncertain region.
         """
@@ -235,62 +306,29 @@ class UncOS:
                 return hypothesis
             loop_i += 1
             if hypothesis.mask_num > 10:
-                import pdb;
-                pdb.set_trace()
+                breakpoint()
             try:
                 sampled_point = self.sample_points_in_mask(remaining_area, 1)[0]
             except Exception as e:
                 print(e)
                 sampled_point = self.sample_points_in_mask(remaining_area, 1, avoid_boundary=False)[0]
             sampled_points_fg = np.array([sampled_point])
-            labels = np.array([0 for _ in range(len(sampled_points_bg))] + [1])
+            sampled_points_labels = np.array([0 for _ in range(len(sampled_points_bg))] + [1])
             sampled_points = np.concatenate((sampled_points_bg, sampled_points_fg), axis=0)
             if len(sampled_points) == 0:
                 return None
 
             if hypothesis.mask_num > 0:
                 sampled_points_negative = self.sample_points_in_mask(hypothesis.area_mask, num_neg_points)
-                labels = np.concatenate((labels, np.zeros(num_neg_points)), axis=0)
-                assert len(labels.shape) == 1
+                sampled_points_labels = np.concatenate((sampled_points_labels, np.zeros(num_neg_points)), axis=0)
+                assert len(sampled_points_labels.shape) == 1
                 sampled_points = np.concatenate((sampled_points, sampled_points_negative), axis=0)
 
-            is_point_query_succeed = False
             for _ in range(n_trial_per_query_point):
-                queried_masks_all = self.masks_from_point_query(sampled_points, input_label=labels, vis=False,
-                                                                return_masknum=3)
-                queried_masks = [(mask, mask.score) for mask in queried_masks_all if mask.score > SCORE_THR]
-                if len(queried_masks) == 0:
-                    if debug:
-                        print(f'visualizing queried masks and confidence score')
-                        plt.figure(figsize=(18, 6))
-                        for i, mask in enumerate(queried_masks_all):
-                            plt.subplot(1, len(queried_masks_all), i + 1)
-                            m1 = overlay_mask_simple(self.rgb_im, mask())
-                            for sampled_point in sampled_points:
-                                cv2.circle(m1, tuple(sampled_point), radius=5, color=(0, 0, 1.))
-                            plt.imshow(m1)
-                            # plt.imshow(mask)
-                            plt.title(mask.score)
-                        plt.show()
-                        # plt.savefig(f'{time.time()}.png')
+                queried_mask, queried_mask_score = self.make_point_query(uncertain_area, pointcloud, hypothesis, sampled_points,
+                                                                         sampled_points_labels, split=split, debug=debug)
+                if queried_mask is None:
                     continue
-                queried_masks.sort(key=lambda x: x[1], reverse=True)
-                queried_mask_, queried_mask_score = queried_masks[0]
-                queried_mask = queried_mask_()
-
-                if is_degenerated_mask(queried_mask, pointcloud)[1]:
-                    continue
-                if (queried_mask & uncertain_area).sum() / queried_mask.sum() < IOU_THRES:
-                    if debug:
-                        print('outside of uncertain region')
-                    continue
-                if hypothesis.mask_num >= 1:
-                    iom = [iom_fn(queried_mask, x) for x in hypothesis.masks]
-                    if any(np.array(iom) > IOU_THRES):
-                        continue
-                    intersection = [intersection_fn(queried_mask, x) for x in hypothesis.masks]
-                    if any(np.array(intersection) > INTERSECTION_THRES):
-                        continue
                 hypothesis.add_part(queried_mask, queried_mask_score)
                 remaining_area = remaining_area & ~queried_mask
                 remaining_area_, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud)
@@ -298,11 +336,9 @@ class UncOS:
                     assert is_mask_degenerated
                     hypothesis.add_part(remaining_area)
                 remaining_area = remaining_area_
-                is_point_query_succeed = True
                 break
-
-            if not is_point_query_succeed:
-                return None
+            else:
+               return None
         if (not is_mask_degenerated) or remaining_area is None:
             return None
         return hypothesis
@@ -338,9 +374,10 @@ class UncOS:
             added_mask = None
             if len(added_masks) > 0:
                 added_mask = added_masks[0]
+            split_overlapping_mask = True if np.random.rand()<0.5 else False
             hypothesis = self.generate_a_hypothesis(uncertain_area, pointcloud, n_trial_per_query_point,
                                                     ori_uncertain_area, added_mask, debug, num_neg_points_base,
-                                                    sampled_points_bg)
+                                                    sampled_points_bg, split=split_overlapping_mask)
             hypotheses.append(hypothesis)
             if len(added_masks) > 0 and \
                     (hypothesis is not None or (len(hypotheses) > 0 and all([x is None for x in hypotheses[-3:]]))):
@@ -418,7 +455,6 @@ class UncOS:
                     break
             if overlap_with_nondegenerated:
                 continue
-            # print(f'proposing new mask for mask of shape {mask.sum()}')
             requeried_mask = self.re_generate_hypothesis_for_degenerated_region(mask, pointcloud)
             added_masks.append(requeried_mask)
         return added_masks
@@ -429,14 +465,20 @@ class UncOS:
         Return the mask of table/background/non-foreground area.
         """
         print(f'point cloud pre-processing...')
+        pred = np.zeros((point_cloud.shape[0], point_cloud.shape[1]))
+        if pred.shape[1] == 3:
+            raise RuntimeError('point_cloud needs to have the same shape as rgb (H W 3)')
 
-        if (point_cloud.reshape(-1, 3)[..., 2] < near).sum() / point_cloud.reshape(-1, 3).shape[0] > 0.3:
+        point_cloud_n3 = point_cloud.reshape(-1,3)
+        valid_pt_below_zero_ratio = np.logical_and((point_cloud_n3 != 0).any(axis=1), point_cloud_n3[..., 2] < near).sum() / (point_cloud_n3 != 0).any(axis=1).sum()
+        if valid_pt_below_zero_ratio > 0.3:
             frame = 'world'
             valid_cond = point_cloud.reshape(-1, 3)[..., 2] > -0.1
         else:
             frame = 'camera'
             valid_cond = np.logical_and(point_cloud.reshape(-1, 3)[..., 2] > near,
                                         point_cloud.reshape(-1, 3)[..., 2] < far)
+        print(f'point cloud in {frame} frame')
         valid_cond = np.logical_and(valid_cond, ~(np.isnan(point_cloud.reshape(-1, 3)).any(axis=1)))
         valid_idx = np.where(valid_cond)[0]  # remove points too close to the camera
 
@@ -546,12 +588,13 @@ class UncOS:
                       debug=False,
                       n_seg_hypotheses_trial=5,
                       n_trial_per_query_point=3,
-                      visualize_hypotheses=False) -> Tuple[List[np.ndarray], List[RegionHypothesis]]:
+                      visualize_hypotheses=False,
+                      fast_inference=True) -> Tuple[List[np.ndarray], List[RegionHypothesis]]:
         self.set_image(rgb_im, pointcloud)
         im_h, im_w, _ = rgb_im.shape
 
         if table_or_background_mask is None:
-            table_or_background_mask = self.get_table_or_background_mask(pointcloud)
+            table_or_background_mask = self.get_table_or_background_mask(pointcloud, fast_inference=fast_inference)
 
         if debug:
             print(f'visualizing table and background mask.')
