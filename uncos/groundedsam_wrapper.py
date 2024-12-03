@@ -18,14 +18,14 @@ import groundingdino.datasets.transforms as T
 from groundingdino.models import build_model
 from groundingdino.util.slconfig import SLConfig
 from groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
-
+from .config import USE_SAM2, GROUNDINGDINO_CKPT_DIR_PATH
 
 # refac from https://github.com/IDEA-Research/Grounded-Segment-Anything/blob/main/automatic_label_ram_demo.py
 class GroundedSAM:
     def __init__(self, box_thr, text_thr, loaded_sam):
         import groundingdino.config.GroundingDINO_SwinT_OGC
         config_file = groundingdino.config.GroundingDINO_SwinT_OGC.__file__
-        cache_dir = os.path.expanduser("~/.cache/uncos")
+        cache_dir = os.path.expanduser(GROUNDINGDINO_CKPT_DIR_PATH)
         grounding_dino_checkpoint_path = os.path.join(cache_dir,
                                                       'groundingdino_swint_ogc.pth')  # change the path of the model
         if not os.path.exists(grounding_dino_checkpoint_path):
@@ -44,7 +44,12 @@ class GroundedSAM:
         with suppress_stdout_stderr():
             self.model = self.load_model(config_file, grounding_dino_checkpoint_path)
         self.model = self.model.to(self.device)
-        self.sam_predictor = SamPredictor(loaded_sam)
+
+        if USE_SAM2:
+            from sam2.sam2_image_predictor import SAM2ImagePredictor
+            self.sam_predictor = SAM2ImagePredictor(loaded_sam)
+        else:
+            self.sam_predictor = SamPredictor(loaded_sam)
 
         normalize = TS.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
@@ -59,7 +64,7 @@ class GroundedSAM:
 
         transform = T.Compose(
             [
-                T.RandomResize([800], max_size=1333),
+                # T.RandomResize([800], max_size=1333),
                 T.ToTensor(),
                 T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
             ]
@@ -94,16 +99,27 @@ class GroundedSAM:
         if len(boxes_filt) == 0:
             return []
 
-        transformed_boxes = self.sam_predictor.transform.apply_boxes_torch(boxes_filt, image_rgb_255.shape[:2]).to(
-            self.device)
-        masks, iou_predictions, _ = self.sam_predictor.predict_torch(
-            point_coords=None,
-            point_labels=None,
-            boxes=transformed_boxes.to(self.device),
-            multimask_output=False,
-        )
-        mask_np = [mask.astype(bool) for mask in masks[:, 0].detach().cpu().numpy()]
-        score_np = iou_predictions[:, 0].detach().cpu().numpy()
+        if USE_SAM2:
+            masks, iou_predictions, _ = self.sam_predictor.predict(
+                box = boxes_filt,
+                multimask_output = False
+            )
+            if len(masks.shape)==3:
+                mask_np = []
+                score_np = []
+            else:
+                mask_np = [mask.astype(bool)[0] for mask in masks]
+                score_np = iou_predictions.squeeze(1)
+        else:
+            transformed_boxes = self.sam_predictor.transform.apply_boxes_torch(boxes_filt, image_rgb_255.shape[:2]).to(self.device)
+            masks, iou_predictions, _ = self.sam_predictor.predict_torch(
+                point_coords = None,
+                point_labels = None,
+                boxes = transformed_boxes.to(self.device),
+                multimask_output = False,
+            )
+            mask_np = [mask.astype(bool) for mask in masks[:,0].detach().cpu().numpy()]
+            score_np = iou_predictions[:,0].detach().cpu().numpy()
         return [MaskWrapper({'segmentation': mask, 'predicted_iou': score, 'bbox': box.numpy()})
                 for (mask, score, box) in zip(mask_np, score_np, boxes_filt)]
 

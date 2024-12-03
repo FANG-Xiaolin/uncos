@@ -31,7 +31,9 @@ object segmentation / active information gathering.
 
 ![UncOS diagram](assets/uncos_diagram.png?raw=true)
 
-Embodied object segmentation code to be added soon. Stayed tuned!
+**[News]** 
+Support for the [SAM2](https://github.com/facebookresearch/sam2) backbone has been added! 
+Please specify the backbone option and provide the path to the checkpoint in `config.py` accordingly.
 
 ## Installation
 

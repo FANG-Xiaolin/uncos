@@ -14,17 +14,11 @@ import open3d as o3d
 
 from scipy.optimize import linear_sum_assignment
 from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator
-from .uncos_utils import iou_fn, iom_fn, intersection_fn, bfs_cluster, crop, overlay_masks, \
-    overlay_mask_simple, is_degenerated_mask, MaskWrapper, SegHypothesis, RegionHypothesis, MIN_AREA_PERCENTAGE
+from .uncos_utils import iou_fn, iom_fn, intersection_fn, bfs_cluster, crop, overlay_masks, visualize_pointcloud, \
+    overlay_mask_simple, is_degenerated_mask, MaskWrapper, SegHypothesis, RegionHypothesis
 from .groundedsam_wrapper import GroundedSAM
-
-IOU_THRES = 0.7
-SCORE_THR = 0.88  # .88 As used in SAM official implementation
-MAX_DEPTH = 3  # 1.2
-INTERSECTION_THRES = 500
-TABLE_INLIER_THR = .01
-VERBOSE_DEBUG = False
-
+from .config import IOU_THRES, SAM_CONF_SCORE_THR, MAX_DEPTH, INTERSECTION_THRES, TABLE_INLIER_THR, MIN_AREA_PERCENTAGE, \
+                    USE_SAM2, UNCOS_CKPT_DIR_PATH, SAM2_CKPT_PATH
 
 class UncOS:
     def __init__(self, add_topdown=True, initialize_tracker=False, device=None, take_union_if_uncertain=False):
@@ -32,7 +26,7 @@ class UncOS:
         self.pcd = None
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        cache_dir = os.path.expanduser("~/.cache/uncos")
+        cache_dir = os.path.expanduser(UNCOS_CKPT_DIR_PATH)
         sam_ckpt_path = os.path.join(cache_dir, "sam_vit_h_4b8939.pth")
         if not os.path.exists(sam_ckpt_path):
             os.makedirs(cache_dir, exist_ok=True)
@@ -41,12 +35,21 @@ class UncOS:
                 'https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth',
                 sam_ckpt_path)
 
-        sam = sam_model_registry["vit_h"](checkpoint=sam_ckpt_path)
-        sam.to(device=device)
-        self.predictor = SamPredictor(sam)
-        # 1024 x 1024 is the input size for SAM pretrained model
-        self.mask_generator = SamAutomaticMaskGenerator(sam,
-                                                        min_mask_region_area=int(MIN_AREA_PERCENTAGE * 1024 * 1024))
+        if not USE_SAM2:
+            sam = sam_model_registry["vit_h"](checkpoint=sam_ckpt_path)
+            sam.to(device=device)
+            self.predictor = SamPredictor(sam)
+            # 1024 x 1024 is the input size for SAM pretrained model
+            self.mask_generator = SamAutomaticMaskGenerator(sam, min_mask_region_area=int(MIN_AREA_PERCENTAGE * 1024 * 1024))
+        else:
+            from sam2.build_sam import build_sam2
+            from sam2.sam2_image_predictor import SAM2ImagePredictor
+            from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+            sam2 = build_sam2("sam2_hiera_l.yaml", SAM2_CKPT_PATH)
+            sam = sam2
+            self.predictor = SAM2ImagePredictor(sam2)
+            # 1024 x 1024 is the input size for SAM pretrained model
+            self.mask_generator = SAM2AutomaticMaskGenerator(sam2, min_mask_region_area=int(MIN_AREA_PERCENTAGE * 1024 * 1024))
 
         if initialize_tracker:
             raise NotImplementedError
@@ -154,7 +157,7 @@ class UncOS:
         all_masks = []
         for sampled_point in sampled_points:
             masks = self.masks_from_point_query(np.array([sampled_point]), return_masknum=3)
-            valid_masks = [maskx() for maskx in masks if maskx.score > SCORE_THR]
+            valid_masks = [maskx() for maskx in masks if maskx.score > SAM_CONF_SCORE_THR]
             all_masks.extend(valid_masks)
         iou_matrix = np.array(
             list(itertools.chain(*[[iou_fn(mask1, mask2) for (i, mask1) in enumerate(all_masks) if i > j]
@@ -213,7 +216,7 @@ class UncOS:
             if no valid mask, return (None, None)
         """
         queried_masks_all = self.masks_from_point_query(sampled_points, input_label=sampled_points_labels, vis=False, return_masknum=3)
-        queried_masks = [(mask, mask.score) for mask in queried_masks_all if mask.score > SCORE_THR]
+        queried_masks = [(mask, mask.score) for mask in queried_masks_all if mask.score > SAM_CONF_SCORE_THR]
         if len(queried_masks) == 0:
             if debug:
                 plt.figure(figsize=(18, 6))
@@ -227,7 +230,7 @@ class UncOS:
                 plt.show()
                 # plt.savefig(f'{time.time()}.png')
 
-                # logging.info(f'no valid queried masks above score {SCORE_THR}. skip')
+                # logging.info(f'no valid queried masks above score {SAM_CONF_SCORE_THR}. skip')
             return None, None
         queried_masks.sort(key=lambda x: x[1], reverse=True)
         queried_mask_, queried_mask_score = queried_masks[0]
@@ -561,8 +564,6 @@ class UncOS:
             inliers_idx_in_valid_cloud = list(
                 set(out_of_bound_idx_in_valid.tolist() + list(inliers_idx_in_valid_cloud)))
 
-        pred = np.zeros((point_cloud.shape[0], point_cloud.shape[1]))
-        assert pred.shape[1] > 10
         pred = pred.reshape(-1)
         pred[valid_idx[inliers_idx_in_valid_cloud]] = 1
         if include_background:
@@ -580,7 +581,7 @@ class UncOS:
         masks_all_certain_raw_sammask = self.grounded_sam_wrapper.process_image(rgb_im, text_prompt=text_prompt)
         masks_all_certain_sammask = [mask for mask in masks_all_certain_raw_sammask if
                                      np.logical_and(mask(), exclude_background_mask).sum() / mask().sum() < 0.8]
-        filtered_mask = [x for x in masks_all_certain_sammask if x.score > SCORE_THR]
+        filtered_mask = [x for x in masks_all_certain_sammask if x.score > SAM_CONF_SCORE_THR]
         masks_all_certain_sammask = filtered_mask
         return masks_all_certain_sammask
 

@@ -9,9 +9,7 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import trimesh
 import open3d as o3d
 import seaborn as sns
-
-MIN_AREA_PERCENTAGE = .001
-
+from .config import MIN_AREA_PERCENTAGE
 
 @dataclass
 class MaskWrapper:
@@ -23,6 +21,10 @@ class MaskWrapper:
     @property
     def score(self):
         return self.rawmask['predicted_iou']
+
+    @property
+    def text_score(self):
+        return self.rawmask['text_score']
 
     def copy(self):
         return MaskWrapper(self.rawmask.copy())
