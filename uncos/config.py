@@ -1,7 +1,7 @@
 # IO Config
 GROUNDINGDINO_CKPT_DIR_PATH = "~/.cache/uncos"
 UNCOS_CKPT_DIR_PATH = "~/.cache/uncos"
-SAM2_CKPT_PATH = "../segment-anything-2/checkpoints/sam2_hiera_large.pt"
+SAM2_CKPT_PATH = "../sam2/checkpoints/sam2.1_hiera_large.pt"
 
 # Uncos Params
 MIN_AREA_PERCENTAGE = .0001

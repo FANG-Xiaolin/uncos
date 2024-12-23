@@ -159,8 +159,7 @@ def draw_seg_on_im(im, pred_masks: List[np.ndarray], alpha=.5, colors=None, plot
             cv2.drawContours(im, contour, -1, contour_color, thickness=contour_width)
         if fill_paint_area:
             im = im.astype(np.float32)
-            im[obj_mask > 0] = im[obj_mask > 0] * alpha + np.array(contour_colors[0]) / np.array(
-                contour_colors[0]).max() * (1 - alpha) * 255
+            im[obj_mask > 0] = im[obj_mask > 0] * alpha + np.array(np.array(cm[0][:3])) / np.array(np.array(cm[0][:3])).max() * (1 - alpha) * 255
             im = im.astype(np.uint8)
     if plot_anno is not None:
         for line_i, text in enumerate(plot_anno.splitlines()):
@@ -215,10 +214,14 @@ def crop(im, mask, margin_pixel=10, return_bbox=False, pad_to_square=True):
             shift_delta = abs(minval)
             maxval += shift_delta
             minval = 0
+            if maxval > maxlimit:
+                maxval = maxlimit
         elif maxval > maxlimit:
             shift_delta = maxval - maxlimit
             maxval = maxlimit
             minval -= shift_delta
+            if minval < 0:
+                minval = 0
         if short_edge == 'x':
             xmin, xmax = minval, maxval
         else:

@@ -45,7 +45,7 @@ class UncOS:
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
-            sam2 = build_sam2("sam2_hiera_l.yaml", SAM2_CKPT_PATH)
+            sam2 = build_sam2("configs/sam2.1/sam2.1_hiera_l.yaml", SAM2_CKPT_PATH)
             sam = sam2
             self.predictor = SAM2ImagePredictor(sam2)
             # 1024 x 1024 is the input size for SAM pretrained model
@@ -139,8 +139,7 @@ class UncOS:
                     all_confident_masks.append(confident_mask)
                     continue
             elif is_degenerated_mask(self.get_union_mask(ucr))[1]:
-                print(
-                    f'AREA too small. {self.get_union_mask(ucr).sum() / self.get_union_mask(ucr).shape[0] / self.get_union_mask(ucr).shape[1]} ')
+                print(f'AREA too small. {self.get_union_mask(ucr).sum() / self.get_union_mask(ucr).shape[0] / self.get_union_mask(ucr).shape[1]} ')
                 continue
             uncertain_regions.append(ucr)
         return all_confident_masks, uncertain_regions
@@ -493,7 +492,7 @@ class UncOS:
         while len(inliers_idx_in_valid_cloud) == 0:
             plane_model, inliers_idx_in_valid_cloud = cloud_o3d.segment_plane(distance_threshold=table_inlier_thr,
                                                                               ransac_n=3,
-                                                                              num_iterations=50 if fast_inference else 500)
+                                                                              num_iterations=500)
             table_inlier_thr += 0.02
         inlier_bool_mask = np.full(valid_cloud.shape[0], fill_value=False, dtype=bool)
         inlier_bool_mask[inliers_idx_in_valid_cloud] = True
@@ -561,8 +560,7 @@ class UncOS:
             out_of_bound_mask = out_of_bound_mask.reshape(-1)
             out_of_bound_mask[valid_idx[out_of_bound_idx_in_valid.tolist()]] = 1
 
-            inliers_idx_in_valid_cloud = list(
-                set(out_of_bound_idx_in_valid.tolist() + list(inliers_idx_in_valid_cloud)))
+            inliers_idx_in_valid_cloud = list(set(out_of_bound_idx_in_valid.tolist() + list(inliers_idx_in_valid_cloud)))
 
         pred = pred.reshape(-1)
         pred[valid_idx[inliers_idx_in_valid_cloud]] = 1
@@ -570,7 +568,7 @@ class UncOS:
             pred[np.where(~valid_cond)[0]] = 1
         pred_hwshape = pred.reshape(*point_cloud.shape[:2]).astype(bool)
         print(f'point cloud pre-processing done.')
-        # visualize_pointcloud(cloud.reshape(-1,3), pred_hwshape.reshape(-1))
+        # visualize_pointcloud(point_cloud.reshape(-1,3), pred_hwshape.reshape(-1))
         return pred_hwshape
 
     def get_table_or_background_mask_coloronly(self):
@@ -599,8 +597,8 @@ class UncOS:
 
         if debug:
             print(f'visualizing table and background mask.')
-            plt.imshow(table_or_background_mask);
-            plt.show();
+            plt.imshow(table_or_background_mask)
+            plt.show()
             plt.close()
 
         if self.add_topdown_highprecision_masks:
