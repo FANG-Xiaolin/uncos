@@ -293,8 +293,13 @@ def is_degenerated_pointcloud(pointcloud_raw, min_edge_len_threshold=.01):
         return True
 
     pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pointcloud))
-    oriented_bounding_box = pcd.get_oriented_bounding_box()
-    oobb_extent = oriented_bounding_box.extent
+    try:
+        oriented_bounding_box = pcd.get_oriented_bounding_box()
+        oobb_extent = oriented_bounding_box.extent
+    except Exception as e:
+        from pdb import traceback; traceback.print_exc()
+        print(f'Error in getting OBB')
+        return True
     if min(oobb_extent) < min_edge_len_threshold:
         return True
     return False
