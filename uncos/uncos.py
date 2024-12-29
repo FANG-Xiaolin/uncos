@@ -462,7 +462,7 @@ class UncOS:
         return added_masks
 
     def get_table_or_background_mask(self, point_cloud, include_background=True, table_inlier_thr=TABLE_INLIER_THR,
-                                     far=3, near=.03, fast_inference=True):
+                                     far=3, near=.03, fast_inference=True, pointcloud_frame=None):
         """
         Return the mask of table/background/non-foreground area.
         """
@@ -472,15 +472,20 @@ class UncOS:
             raise RuntimeError('point_cloud needs to have the same shape as rgb (H W 3)')
 
         point_cloud_n3 = point_cloud.reshape(-1,3)
-        valid_pt_below_zero_ratio = np.logical_and((point_cloud_n3 != 0).any(axis=1), point_cloud_n3[..., 2] < near).sum() / (point_cloud_n3 != 0).any(axis=1).sum()
-        if valid_pt_below_zero_ratio > 0.3:
-            frame = 'world'
+        if pointcloud_frame is None:
+            valid_pt_below_zero_ratio = np.logical_and((point_cloud_n3 != 0).any(axis=1), point_cloud_n3[..., 2] < near).sum() / (point_cloud_n3 != 0).any(axis=1).sum()
+            if valid_pt_below_zero_ratio > 0.25:
+                pointcloud_frame = 'world'
+            else:
+                pointcloud_frame = 'camera'
+        if pointcloud_frame == 'world':
             valid_cond = point_cloud.reshape(-1, 3)[..., 2] > -0.1
+        elif pointcloud_frame == 'camera':
+            valid_cond = np.logical_and(point_cloud.reshape(-1, 3)[..., 2] > near, point_cloud.reshape(-1, 3)[..., 2] < far)
         else:
-            frame = 'camera'
-            valid_cond = np.logical_and(point_cloud.reshape(-1, 3)[..., 2] > near,
-                                        point_cloud.reshape(-1, 3)[..., 2] < far)
-        print(f'point cloud in {frame} frame')
+            raise RuntimeError('pointcloud_frame should be [world/camera]')
+
+        print(f'point cloud in {pointcloud_frame} frame')
         valid_cond = np.logical_and(valid_cond, ~(np.isnan(point_cloud.reshape(-1, 3)).any(axis=1)))
         valid_idx = np.where(valid_cond)[0]  # remove points too close to the camera
 
@@ -517,10 +522,10 @@ class UncOS:
             a, b, c, d = plane_model
             plane_normal = np.array([a, b, c])
 
-            if frame == 'camera' and np.dot(plane_normal, np.array([0, 0, 1])) > 0:
+            if pointcloud_frame == 'camera' and np.dot(plane_normal, np.array([0, 0, 1])) > 0:
                 # revert if pointing 'into' the table
                 plane_normal *= -1
-            if frame == 'world' and np.dot(plane_normal, np.array([0, 0, -1])) > 0:
+            if pointcloud_frame == 'world' and np.dot(plane_normal, np.array([0, 0, -1])) > 0:
                 # revert if pointing to the floor
                 plane_normal *= -1
 
@@ -585,6 +590,7 @@ class UncOS:
 
     def segment_scene(self, rgb_im, pointcloud, table_or_background_mask=None, return_most_likely_only=False,
                       debug=False,
+                      pointcloud_frame=None,
                       n_seg_hypotheses_trial=5,
                       n_trial_per_query_point=3,
                       visualize_hypotheses=False,
@@ -593,7 +599,7 @@ class UncOS:
         im_h, im_w, _ = rgb_im.shape
 
         if table_or_background_mask is None:
-            table_or_background_mask = self.get_table_or_background_mask(pointcloud, fast_inference=fast_inference)
+            table_or_background_mask = self.get_table_or_background_mask(pointcloud, fast_inference=fast_inference, pointcloud_frame=pointcloud_frame)
 
         if debug:
             print(f'visualizing table and background mask.')
