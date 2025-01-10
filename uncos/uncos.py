@@ -494,11 +494,13 @@ class UncOS:
         # visualize_pointcloud(valid_cloud, np.full(valid_cloud.shape[0], fill_value=False, dtype=bool))
 
         inliers_idx_in_valid_cloud = []
-        while len(inliers_idx_in_valid_cloud) == 0:
+        while len(inliers_idx_in_valid_cloud) == 0 and table_inlier_thr < 0.1:
             plane_model, inliers_idx_in_valid_cloud = cloud_o3d.segment_plane(distance_threshold=table_inlier_thr,
                                                                               ransac_n=3,
                                                                               num_iterations=500)
             table_inlier_thr += 0.02
+        if table_inlier_thr >= 0.1:
+            raise RuntimeError(f'Error in getting table plane')
         inlier_bool_mask = np.full(valid_cloud.shape[0], fill_value=False, dtype=bool)
         inlier_bool_mask[inliers_idx_in_valid_cloud] = True
         # visualize_pointcloud(valid_cloud, inlier_bool_mask)
@@ -518,6 +520,8 @@ class UncOS:
             inlier_bool_mask[inliers_idx_in_valid_cloud] = True
             # visualize_pointcloud(valid_cloud, inlier_bool_mask)
 
+        self.last_table_cloud = valid_cloud[inlier_bool_mask]
+        self.last_plane_model = plane_model
         if include_background:
             a, b, c, d = plane_model
             plane_normal = np.array([a, b, c])
@@ -654,7 +658,6 @@ class UncOS:
                 confident_masks.extend(hypotheses_for_area_i.masks_union)
         if visualize_hypotheses:
             self.visualize_confident_uncertain(confident_masks, hypotheses)
-
         if return_most_likely_only:
             most_likely_hypothesis = itertools.chain(
                 *[hypothesis.get_most_likely_hypothesis() for hypothesis in hypotheses])
