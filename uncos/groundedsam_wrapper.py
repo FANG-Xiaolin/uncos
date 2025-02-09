@@ -2,6 +2,7 @@ import os
 import sys
 import cv2
 import numpy as np
+from typing import Optional
 import torch
 import torchvision
 from PIL import Image
@@ -72,7 +73,7 @@ class GroundedSAM:
         image_normalized, _ = transform(image_pil, None)  # 3, h, w
         return image_pil, image_normalized
 
-    def process_image(self, image_rgb_255, text_prompt):
+    def process_image(self, image_rgb_255, text_prompt, visualize=False, save_visualize_path=None):
         # load image
         image_pil, image_normalized = self.load_image(image_rgb_255)
         image_rgb_255 = np.array(image_pil)
@@ -120,6 +121,10 @@ class GroundedSAM:
             )
             mask_np = [mask.astype(bool) for mask in masks[:,0].detach().cpu().numpy()]
             score_np = iou_predictions[:,0].detach().cpu().numpy()
+
+        if visualize:
+            self.visualize_output(image_rgb_255, mask_np, boxes_filt, pred_phrases, save_visualize_path)
+
         return [MaskWrapper({'segmentation': mask, 'predicted_iou': score, 'bbox': box.numpy()})
                 for (mask, score, box) in zip(mask_np, score_np, boxes_filt)]
 
@@ -167,6 +172,25 @@ class GroundedSAM:
 
         return boxes_filt, torch.Tensor(scores), pred_phrases
 
+    def visualize_output(self, image: np.ndarray, masks: np.ndarray[bool], boxes: list[np.ndarray], phrases: list[str], save_path: Optional[str] = None):
+        # draw output image
+        plt.figure(figsize=(10, 10))
+        plt.imshow(image)
+        for mask in masks:
+            self.show_mask(mask, plt.gca(), random_color=True)
+        for box, label in zip(boxes, phrases):
+            self.show_box(box, plt.gca(), label)
+        plt.axis('off')
+        plt.tight_layout(pad=0.1)
+        if save_path is None:
+            plt.show()
+            plt.close()
+            return
+        if not os.path.exists(os.path.dirname(save_path)):
+            os.makedirs(os.path.dirname(save_path))
+        plt.savefig(save_path)
+        plt.close()
+
     def show_mask(self, mask, ax, random_color=False):
         if random_color:
             color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
@@ -179,21 +203,26 @@ class GroundedSAM:
     def show_box(self, box, ax, label):
         x0, y0 = box[0], box[1]
         w, h = box[2] - box[0], box[3] - box[1]
-        ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0, 0, 0, 0), lw=2))
+        ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0, 0, 0, 0), lw=4))
         ax.text(x0, y0, label)
 
 
 if __name__ == '__main__':
     im = cv2.imread(sys.argv[1])[..., ::-1]
 
-    # TEXT_PROMPT = 'A rigid object.'
+    use_sam2 = True
+    text_prompt = 'A rigid object.'
     BBOX_THR = .15
     TEXT_THR = .05
-    sam_checkpoint = os.path.join('data', 'sam_vit_h_4b8939.pth')
-    loaded_sam = build_sam(checkpoint=sam_checkpoint).to(
-        torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-    grounded_sam_ram = GroundedSAM(BBOX_THR, TEXT_THR, loaded_sam)
-    output_sammasks = grounded_sam_ram.process_image(im, text_prompt='A rigid object.')
+
+    if use_sam2:
+        from sam2.build_sam import build_sam2
+        loaded_sam = build_sam2("configs/sam2.1/sam2.1_hiera_l.yaml", "../sam2/checkpoints/sam2.1_hiera_large.pt")
+    else:
+        sam_checkpoint = os.path.join('data', 'sam_vit_h_4b8939.pth')
+        loaded_sam = build_sam(checkpoint=sam_checkpoint).to(torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
+    grounded_sam = GroundedSAM(BBOX_THR, TEXT_THR, loaded_sam)
+    output_sammasks = grounded_sam.process_image(im, text_prompt=text_prompt)
     for output_mask in output_sammasks:
         plt.imshow(output_mask())
         plt.show()
