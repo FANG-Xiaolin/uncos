@@ -592,18 +592,23 @@ class UncOS:
         masks_all_certain_sammask = filtered_mask
         return masks_all_certain_sammask
 
-    def segment_scene(self, rgb_im, pointcloud, table_or_background_mask=None, return_most_likely_only=False,
-                      debug=False,
-                      pointcloud_frame=None,
-                      n_seg_hypotheses_trial=5,
-                      n_trial_per_query_point=3,
-                      visualize_hypotheses=False,
-                      fast_inference=True) -> Tuple[List[np.ndarray], List[RegionHypothesis]]:
+    def segment_scene(
+        self, rgb_im, pointcloud, table_or_background_mask=None, return_most_likely_only=False,
+        debug=False,
+        pointcloud_frame=None,
+        n_seg_hypotheses_trial=5,
+        n_trial_per_query_point=3,
+        visualize_hypotheses=False,
+        fast_inference=True
+    ) -> Tuple[List[np.ndarray], List[RegionHypothesis]]:
         self.set_image(rgb_im, pointcloud)
         im_h, im_w, _ = rgb_im.shape
 
         if table_or_background_mask is None:
-            table_or_background_mask = self.get_table_or_background_mask(pointcloud, fast_inference=fast_inference, pointcloud_frame=pointcloud_frame)
+            if pointcloud is not None:
+                table_or_background_mask = self.get_table_or_background_mask(pointcloud, fast_inference=fast_inference, pointcloud_frame=pointcloud_frame)
+            else:
+                table_or_background_mask = np.zeros(rgb_im.shape[:2]).astype(bool)
 
         if debug:
             print(f'visualizing table and background mask.')
