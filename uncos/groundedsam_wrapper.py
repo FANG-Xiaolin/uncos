@@ -19,16 +19,15 @@ import groundingdino.datasets.transforms as T
 from groundingdino.models import build_model
 from groundingdino.util.slconfig import SLConfig
 from groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
-from .config import USE_SAM2, GROUNDINGDINO_CKPT_DIR_PATH
+import uncos.config as config
 
 # refac from https://github.com/IDEA-Research/Grounded-Segment-Anything/blob/main/automatic_label_ram_demo.py
 class GroundedSAM:
     def __init__(self, box_thr, text_thr, loaded_sam):
         import groundingdino.config.GroundingDINO_SwinT_OGC
         config_file = groundingdino.config.GroundingDINO_SwinT_OGC.__file__
-        cache_dir = os.path.expanduser(GROUNDINGDINO_CKPT_DIR_PATH)
-        grounding_dino_checkpoint_path = os.path.join(cache_dir,
-                                                      'groundingdino_swint_ogc.pth')  # change the path of the model
+        cache_dir = os.path.expanduser(config.groundingdino_ckpt_dir_path)
+        grounding_dino_checkpoint_path = os.path.join(cache_dir, 'groundingdino_swint_ogc.pth')  # change the path of the model
         if not os.path.exists(grounding_dino_checkpoint_path):
             os.makedirs(cache_dir, exist_ok=True)
             print(f'Downloading GroundingDINO checkpoint to {grounding_dino_checkpoint_path}.')
@@ -46,11 +45,12 @@ class GroundedSAM:
             self.model = self.load_model(config_file, grounding_dino_checkpoint_path)
         self.model = self.model.to(self.device)
 
-        if USE_SAM2:
+        if config.use_sam2:
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             self.sam_predictor = SAM2ImagePredictor(loaded_sam)
         else:
             self.sam_predictor = SamPredictor(loaded_sam)
+        self.use_sam2 = config.use_sam2
 
         normalize = TS.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
@@ -100,7 +100,7 @@ class GroundedSAM:
         if len(boxes_filt) == 0:
             return []
 
-        if USE_SAM2:
+        if self.use_sam2:
             masks, iou_predictions, _ = self.sam_predictor.predict(
                 box = boxes_filt,
                 multimask_output = False

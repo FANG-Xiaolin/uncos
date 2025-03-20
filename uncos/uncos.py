@@ -17,16 +17,16 @@ from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskG
 from .uncos_utils import iou_fn, iom_fn, intersection_fn, bfs_cluster, crop, overlay_masks, visualize_pointcloud, \
     overlay_mask_simple, is_degenerated_mask, MaskWrapper, SegHypothesis, RegionHypothesis
 from .groundedsam_wrapper import GroundedSAM
-from .config import IOU_THRES, SAM_CONF_SCORE_THR, MAX_DEPTH, INTERSECTION_THRES, TABLE_INLIER_THR, MIN_AREA_PERCENTAGE, \
-                    USE_SAM2, UNCOS_CKPT_DIR_PATH, SAM2_CKPT_PATH
+import uncos.config as config
 
 class UncOS:
     def __init__(self, add_topdown=True, initialize_tracker=False, device=None, take_union_if_uncertain=False):
+        self.config = config
         self.rgb_im = None
         self.pcd = None
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        cache_dir = os.path.expanduser(UNCOS_CKPT_DIR_PATH)
+        cache_dir = os.path.expanduser(self.config.uncos_ckpt_dir_path)
         sam_ckpt_path = os.path.join(cache_dir, "sam_vit_h_4b8939.pth")
         if not os.path.exists(sam_ckpt_path):
             os.makedirs(cache_dir, exist_ok=True)
@@ -35,21 +35,20 @@ class UncOS:
                 'https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth',
                 sam_ckpt_path)
 
-        if not USE_SAM2:
+        if not self.config.use_sam2:
             sam = sam_model_registry["vit_h"](checkpoint=sam_ckpt_path)
             sam.to(device=device)
             self.predictor = SamPredictor(sam)
             # 1024 x 1024 is the input size for SAM pretrained model
-            self.mask_generator = SamAutomaticMaskGenerator(sam, min_mask_region_area=int(MIN_AREA_PERCENTAGE * 1024 * 1024))
+            self.mask_generator = SamAutomaticMaskGenerator(sam, min_mask_region_area=int(self.config.min_area_percentage * 1024 * 1024))
         else:
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
-            sam2 = build_sam2("configs/sam2.1/sam2.1_hiera_l.yaml", SAM2_CKPT_PATH)
-            sam = sam2
-            self.predictor = SAM2ImagePredictor(sam2)
+            sam = build_sam2("configs/sam2.1/sam2.1_hiera_l.yaml", self.config.sam2_ckpt_path).to(device=device)
+            self.predictor = SAM2ImagePredictor(sam)
             # 1024 x 1024 is the input size for SAM pretrained model
-            self.mask_generator = SAM2AutomaticMaskGenerator(sam2, min_mask_region_area=int(MIN_AREA_PERCENTAGE * 1024 * 1024))
+            self.mask_generator = SAM2AutomaticMaskGenerator(sam, min_mask_region_area=int(self.config.min_area_percentage * 1024 * 1024))
 
         if initialize_tracker:
             raise NotImplementedError
@@ -71,14 +70,14 @@ class UncOS:
         self.predictor.set_image(rgb_im)
         self.pcd = pointcloud
 
-    def filter_mask_depth(self, masks, depth, threshold=0.3, max_depth=MAX_DEPTH):
+    def filter_mask_depth(self, masks, depth, threshold=0.3):
         """
             Remove predicted masks that contain objects far from the camera.
         """
         filtered_masks = []
         for i, mask in enumerate(masks):
             roi_depth = depth[mask().astype(bool)][:, 2]
-            too_far_percentage = (np.sum(roi_depth > max_depth) + np.sum(roi_depth == 0)) / np.sum(mask())
+            too_far_percentage = (np.sum(roi_depth > self.config.max_depth) + np.sum(roi_depth == 0)) / np.sum(mask())
             if too_far_percentage < threshold:
                 filtered_masks.append(mask)
         return filtered_masks
@@ -99,10 +98,9 @@ class UncOS:
                 filtered_masks.append(mask)
         return filtered_masks
 
-    def get_uncertain_areas(self, masks_raw: List[MaskWrapper], iom_thershold=IOU_THRES, added_masks=None) -> Tuple[
+    def get_uncertain_areas(self, masks_raw: List[MaskWrapper], added_masks=None) -> Tuple[
         List[np.ndarray], List[List]]:
         """
-
         Args:
             masks: list of masks ( in MaskWrapper )
 
@@ -119,7 +117,7 @@ class UncOS:
                 iom = iom_fn(masks[i](), masks[j]())
                 iom_matrix[i, j] = iom
                 iom_matrix[j, i] = iom
-        clusters = bfs_cluster(iom_matrix, iom_thershold)
+        clusters = bfs_cluster(iom_matrix, config.iom_threshold)
 
         all_confident_masks, uncertain_regions = [], []
         for cluster in clusters:
@@ -138,7 +136,7 @@ class UncOS:
                 if is_certain:
                     all_confident_masks.append(confident_mask)
                     continue
-            elif is_degenerated_mask(self.get_union_mask(ucr))[1]:
+            elif is_degenerated_mask(self.get_union_mask(ucr), min_area_percentage_threshold=self.config.min_area_percentage)[1]:
                 print(f'AREA too small. {self.get_union_mask(ucr).sum() / self.get_union_mask(ucr).shape[0] / self.get_union_mask(ucr).shape[1]} ')
                 continue
             uncertain_regions.append(ucr)
@@ -156,13 +154,13 @@ class UncOS:
         all_masks = []
         for sampled_point in sampled_points:
             masks = self.masks_from_point_query(np.array([sampled_point]), return_masknum=3)
-            valid_masks = [maskx() for maskx in masks if maskx.score > SAM_CONF_SCORE_THR]
+            valid_masks = [maskx() for maskx in masks if maskx.score > self.config.sam_conf_score_thr]
             all_masks.extend(valid_masks)
         iou_matrix = np.array(
             list(itertools.chain(*[[iou_fn(mask1, mask2) for (i, mask1) in enumerate(all_masks) if i > j]
                                    for (j, mask2) in enumerate(all_masks)])))
 
-        if any(iou_matrix < IOU_THRES):
+        if any(iou_matrix < self.config.iou_thres):
             is_confident = False
         if len(all_masks) == 0:
             all_masks = [mask]
@@ -215,7 +213,7 @@ class UncOS:
             if no valid mask, return (None, None)
         """
         queried_masks_all = self.masks_from_point_query(sampled_points, input_label=sampled_points_labels, vis=False, return_masknum=3)
-        queried_masks = [(mask, mask.score) for mask in queried_masks_all if mask.score > SAM_CONF_SCORE_THR]
+        queried_masks = [(mask, mask.score) for mask in queried_masks_all if mask.score > self.config.sam_conf_score_thr]
         if len(queried_masks) == 0:
             if debug:
                 plt.figure(figsize=(18, 6))
@@ -229,47 +227,45 @@ class UncOS:
                 plt.show()
                 # plt.savefig(f'{time.time()}.png')
 
-                # logging.info(f'no valid queried masks above score {SAM_CONF_SCORE_THR}. skip')
+                # logging.info(f'no valid queried masks above score {self.config.sam_conf_score_thr}. skip')
             return None, None
         queried_masks.sort(key=lambda x: x[1], reverse=True)
         queried_mask_, queried_mask_score = queried_masks[0]
         queried_mask = queried_mask_()
 
-        if is_degenerated_mask(queried_mask, pointcloud)[1]:
+        if is_degenerated_mask(queried_mask, pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)[1]:
             return None, None
-        if (queried_mask & uncertain_area).sum() / queried_mask.sum() < IOU_THRES:
+        if (queried_mask & uncertain_area).sum() / queried_mask.sum() < self.config.iou_thres:
             if debug:
                 print('outside of uncertain region')
             return None, None
         if hypothesis.mask_num >= 1:
             iom = np.array([iom_fn(queried_mask, x) for x in hypothesis.masks])
-            overlapped = np.where(iom > IOU_THRES)[0]
+            overlapped = np.where(iom > self.config.iou_thres)[0]
             if len(overlapped) > 0:
-                if split and len(
-                        np.where(np.array([iou_fn(queried_mask, x) for x in hypothesis.masks]) > IOU_THRES)[0]) == 0:
+                if split and len(np.where(np.array([iou_fn(queried_mask, x) for x in hypothesis.masks]) > self.config.iou_thres)[0]) == 0:
                     for overlap_mask_idx in overlapped:
                         is_query_smaller = queried_mask.sum() < hypothesis.masks[overlap_mask_idx].sum()
                         if not is_query_smaller:
                             # TODO: set-based subtraction
                             queried_mask = queried_mask & ~hypothesis.masks[overlap_mask_idx]
-                            remaining_area_subtractedmask, is_mask_degenerated_subtractedmask = is_degenerated_mask(
-                                queried_mask,
-                                pointcloud=pointcloud)
+                            remaining_area_subtractedmask, is_mask_degenerated_subtractedmask = \
+                                is_degenerated_mask(queried_mask, pointcloud=pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)
                             if is_mask_degenerated_subtractedmask:
                                 return None, None
                             # else:
                             #     break
                         else:
                             hypothesis.masks[overlap_mask_idx] = hypothesis.masks[overlap_mask_idx] & ~queried_mask
-                            remaining_area_prevmask, is_mask_degenerated_prevmask = is_degenerated_mask(hypothesis.masks[overlap_mask_idx],
-                                                                                       pointcloud=pointcloud)
+                            remaining_area_prevmask, is_mask_degenerated_prevmask = \
+                                is_degenerated_mask(hypothesis.masks[overlap_mask_idx], pointcloud=pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)
                             if is_mask_degenerated_prevmask:
                                 return None, None
                 else:
                     return None, None
             intersection = [intersection_fn(queried_mask, x) for x in hypothesis.masks]
             if not split:
-                if any(np.array(intersection) > INTERSECTION_THRES):
+                if any(np.array(intersection) > self.config.intersection_thres):
                     return None, None
         return queried_mask, queried_mask_score
 
@@ -287,7 +283,7 @@ class UncOS:
         num_neg_points = num_neg_points_base
         remaining_area = uncertain_area.copy()
         hypothesis = SegHypothesis()
-        remaining_area, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud)
+        remaining_area, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)
         if is_mask_degenerated:
             hypothesis.add_part(ori_uncertain_area.copy())
             return hypothesis
@@ -295,9 +291,8 @@ class UncOS:
         if added_mask is not None:
             hypothesis.add_part(added_mask)
             remaining_area = remaining_area & ~added_mask
-            remaining_area, is_mask_degenerated = is_degenerated_mask(remaining_area,
-                                                                      pointcloud=pointcloud)
-        while not is_mask_degenerated:  # or iou_fn(hypothesis.area_mask,uncertain_area)<IOU_THRES:
+            remaining_area, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)
+        while not is_mask_degenerated:  # or iou_fn(hypothesis.area_mask,uncertain_area)<self.config.iou_thres:
             if hypothesis.mask_num > 0 and iou_fn(hypothesis.area_mask, ori_uncertain_area) >= .9:
                 return hypothesis
             if loop_i > 30:
@@ -333,7 +328,7 @@ class UncOS:
                     continue
                 hypothesis.add_part(queried_mask, queried_mask_score)
                 remaining_area = remaining_area & ~queried_mask
-                remaining_area_, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud)
+                remaining_area_, is_mask_degenerated = is_degenerated_mask(remaining_area, pointcloud=pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)
                 if remaining_area_ is None:
                     assert is_mask_degenerated
                     hypothesis.add_part(remaining_area)
@@ -345,9 +340,11 @@ class UncOS:
             return None
         return hypothesis
 
-    def get_hypotheses_of_region(self, uncertain_area, n_result=5, pointcloud=None,
-                                 remove_repeat_hypothesis=True, n_trial_per_query_point=3, debug=False,
-                                 added_masks=None) -> RegionHypothesis:
+    def get_hypotheses_of_region(
+        self, uncertain_area, n_result=5, pointcloud=None,
+        remove_repeat_hypothesis=True, n_trial_per_query_point=3,
+        debug=False,added_masks=None
+    ) -> RegionHypothesis:
         """
         Generate X segmentation hypotheses for an uncertain region.
         Args:
@@ -423,7 +420,7 @@ class UncOS:
             points_sampled_from_mask = self.sample_points_in_mask(mask(), avoid_boundary=False)
             queried_masks = self.masks_from_point_query(np.array([points_sampled_from_mask]))
             for queried_mask in queried_masks:
-                if not is_degenerated_mask(queried_mask(), pointcloud)[1]:
+                if not is_degenerated_mask(queried_mask(), pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)[1]:
                     return queried_mask
         # add points from neighboring area
         kernel_size = 3
@@ -433,7 +430,7 @@ class UncOS:
             point_sampled_from_mask = self.sample_points_in_mask(mask(), avoid_boundary=False)
             point_sampled_from_edge = self.sample_points_in_mask(edge, avoid_boundary=False)
             queried_mask = self.masks_from_point_query(np.array([point_sampled_from_mask, point_sampled_from_edge]))[0]
-            if not is_degenerated_mask(queried_mask(), pointcloud)[1]:
+            if not is_degenerated_mask(queried_mask(), pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)[1]:
                 return queried_mask
             kernel_size += 1
         return queried_mask
@@ -444,7 +441,7 @@ class UncOS:
         if pointcloud is None:
             return added_masks
         for i, mask in enumerate(masks):
-            if not is_degenerated_mask(mask(), pointcloud)[1]:
+            if not is_degenerated_mask(mask(), pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)[1]:
                 continue
 
             overlap_with_nondegenerated = False
@@ -452,7 +449,7 @@ class UncOS:
                 if i == j:
                     continue
                 iom = iom_fn(mask(), mask_other())
-                if iom > IOU_THRES and not is_degenerated_mask(mask_other(), pointcloud)[1]:
+                if iom > self.config.iou_thres and not is_degenerated_mask(mask_other(), pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)[1]:
                     overlap_with_nondegenerated = True
                     break
             if overlap_with_nondegenerated:
@@ -461,10 +458,19 @@ class UncOS:
             added_masks.append(requeried_mask)
         return added_masks
 
-    def get_table_or_background_mask(self, point_cloud, include_background=True, table_inlier_thr=TABLE_INLIER_THR,
-                                     far=3, near=.03, fast_inference=True, pointcloud_frame=None):
+    def get_table_or_background_mask(
+        self, point_cloud, include_background=True,
+        far=3, near=.03, fast_inference=True, pointcloud_frame=None
+    ):
         """
         Return the mask of table/background/non-foreground area.
+        Args:
+            point_cloud: H x W x 3
+            include_background: include the background in the returned mask
+            far: far distance from the camera in meters
+            near: near distance from the camera in meters
+            fast_inference: set to False if skip the step of removing the wall at the back of the table
+            pointcloud_frame: 'world' or 'camera'. If 'world', assuming the table is aligned with the world xy plane.
         """
         print(f'point cloud pre-processing...')
         pred = np.zeros((point_cloud.shape[0], point_cloud.shape[1]))
@@ -494,6 +500,7 @@ class UncOS:
         # visualize_pointcloud(valid_cloud, np.full(valid_cloud.shape[0], fill_value=False, dtype=bool))
 
         inliers_idx_in_valid_cloud = []
+        table_inlier_thr = self.config.table_inlier_thr
         while len(inliers_idx_in_valid_cloud) == 0 and table_inlier_thr < 0.1:
             plane_model, inliers_idx_in_valid_cloud = cloud_o3d.segment_plane(distance_threshold=table_inlier_thr,
                                                                               ransac_n=3,
@@ -588,12 +595,14 @@ class UncOS:
         masks_all_certain_raw_sammask = self.grounded_sam_wrapper.process_image(rgb_im, text_prompt=text_prompt)
         masks_all_certain_sammask = [mask for mask in masks_all_certain_raw_sammask if
                                      np.logical_and(mask(), exclude_background_mask).sum() / mask().sum() < 0.8]
-        filtered_mask = [x for x in masks_all_certain_sammask if x.score > SAM_CONF_SCORE_THR]
+        filtered_mask = [x for x in masks_all_certain_sammask if x.score > self.config.sam_conf_score_thr]
         masks_all_certain_sammask = filtered_mask
         return masks_all_certain_sammask
 
     def segment_scene(
-        self, rgb_im, pointcloud, table_or_background_mask=None, return_most_likely_only=False,
+        self, rgb_im, pointcloud,
+        table_or_background_mask=None,
+        return_most_likely_only=False,
         debug=False,
         pointcloud_frame=None,
         n_seg_hypotheses_trial=5,
@@ -650,9 +659,9 @@ class UncOS:
                                                                   remove_repeat_hypothesis=True,
                                                                   n_trial_per_query_point=n_trial_per_query_point,
                                                                   debug=debug,
-                                                                  added_masks=[x() for x in topdown_highprecision_masks
-                                                                               if iom_fn(x(),
-                                                                                         uncertain_area_areamask) > IOU_THRES])
+                                                                  added_masks=[
+                                                                      x() for x in topdown_highprecision_masks
+                                                                      if iom_fn(x(), uncertain_area_areamask) > self.config.iou_thres])
             hypotheses_for_each_area.append(hypotheses_for_area_i)
 
         for hypotheses_for_area_i in hypotheses_for_each_area:
@@ -676,7 +685,7 @@ class UncOS:
             return masks
         volumes = []
         for i, mask in enumerate(masks):
-            if is_degenerated_mask(mask(), pointcloud)[1]:
+            if is_degenerated_mask(mask(), pointcloud, min_area_percentage_threshold=self.config.min_area_percentage)[1]:
                 volumes.append(0)
                 continue
             volumes.append(.01)  # could compute volume but skipped for efficiency
@@ -684,8 +693,8 @@ class UncOS:
         threshold = 0.00001  # volume threshold - masks under this will be merged w others
         small_regions_id = [index for index, val in enumerate(volumes) if val < threshold]
         for i in range(len(masks)):
-            if i in small_regions_id and not any(
-                    j != i and volumes[j] > volumes[i] and iom_fn(masks[i](), masks[j]()) > IOU_THRES for j in
+            if i in small_regions_id and \
+                not any(j != i and volumes[j] > volumes[i] and iom_fn(masks[i](), masks[j]()) > self.config.iou_thres for j in
                     range(len(masks))):
                 continue
             else:

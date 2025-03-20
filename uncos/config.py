@@ -1,16 +1,17 @@
 # IO Config
-GROUNDINGDINO_CKPT_DIR_PATH = "~/.cache/uncos"
-UNCOS_CKPT_DIR_PATH = "~/.cache/uncos"
-SAM2_CKPT_PATH = "../sam2/checkpoints/sam2.1_hiera_large.pt"
+groundingdino_ckpt_dir_path = "~/.cache/uncos"
+uncos_ckpt_dir_path = "~/.cache/uncos"
 
 # Uncos Params
-MIN_AREA_PERCENTAGE = .0001
-IOU_THRES = 0.7
-MAX_DEPTH = 3  # 1.2
-INTERSECTION_THRES = 500
-TABLE_INLIER_THR = .01
-VERBOSE_DEBUG = False
+min_area_percentage = .0001
+iou_thres = 0.7
+iom_threshold = 0.7
+max_depth = 3  # 1.2
+intersection_thres = 500
+table_inlier_thr = .01
+verbose_debug = False
 
 # Backbone Params
-USE_SAM2 = False
-SAM_CONF_SCORE_THR = .8 if USE_SAM2 else 0.88 # As used in SAM official implementation
+use_sam2 = False
+sam2_ckpt_path = "../sam2/checkpoints/sam2.1_hiera_large.pt"
+sam_conf_score_thr = .8 if use_sam2 else 0.88 # As used in SAM official implementation

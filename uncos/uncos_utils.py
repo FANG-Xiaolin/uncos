@@ -9,7 +9,6 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import trimesh
 import open3d as o3d
 import seaborn as sns
-from .config import MIN_AREA_PERCENTAGE
 
 @dataclass
 class MaskWrapper:
@@ -305,8 +304,11 @@ def is_degenerated_pointcloud(pointcloud_raw, min_edge_len_threshold=.01):
     return False
 
 
-def is_degenerated_mask(mask: np.ndarray, pointcloud=None, min_area_percentage_threshold=MIN_AREA_PERCENTAGE,
-                        narrow_area_threshold=10) -> Tuple[Union[np.ndarray, None], bool]:
+def is_degenerated_mask(
+    mask: np.ndarray, pointcloud=None,
+    min_area_percentage_threshold=.0001,
+    narrow_area_threshold=10
+) -> Tuple[Union[np.ndarray, None], bool]:
     """
     Determine if a mask is degenerated. If not, fill in the small holes and remove flying pixels.
     """
