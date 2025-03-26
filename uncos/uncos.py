@@ -486,8 +486,10 @@ class UncOS:
                 pointcloud_frame = 'camera'
         if pointcloud_frame == 'world':
             valid_cond = point_cloud.reshape(-1, 3)[..., 2] > -0.1
+            valid_cond = np.logical_and(valid_cond, (point_cloud_n3 != 0).any(axis=1))
         elif pointcloud_frame == 'camera':
             valid_cond = np.logical_and(point_cloud.reshape(-1, 3)[..., 2] > near, point_cloud.reshape(-1, 3)[..., 2] < far)
+            valid_cond = np.logical_and(valid_cond, (point_cloud_n3 != 0).any(axis=1))
         else:
             raise RuntimeError('pointcloud_frame should be [world/camera]')
 
